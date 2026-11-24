@@ -14,6 +14,14 @@ jobs:
           java-version: '25'
           cache: gradle
       - run: ./gradlew clean build
+      - name: Verify the packaged CLI
+        run: ci/verify-distribution.sh build/distributions/*.zip
+      - name: Save the verified CLI distribution
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: cli-distribution
+          path: build/distributions/*.zip
+          if-no-files-found: error
       # SonarQube example. Use a configured project and a reviewed action revision.
       # - name: Analyze Java code and import coverage
       #   uses: SonarSource/sonarqube-scan-action@<reviewed-commit-sha>
@@ -41,3 +49,22 @@ jobs:
         with:
           name: coverage-report
           path: build/reports/jacoco/test/html/
+
+  # Optional staging example. The staging runner would have unzip and a writable release directory.
+  # stage-cli:
+  #   needs: verify
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   runs-on: [self-hosted, staging]
+  #   environment: staging
+  #   steps:
+  #     - name: Download the distribution verified in this run
+  #       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+  #       with:
+  #         name: cli-distribution
+  #         path: package
+  #     - name: Install the CLI under its source revision
+  #       env:
+  #         RELEASE_DIR: /srv/queued-link-extractor/releases/${{ github.sha }}
+  #       run: |
+  #         mkdir -p "$RELEASE_DIR"
+  #         unzip -o package/*.zip -d "$RELEASE_DIR"
