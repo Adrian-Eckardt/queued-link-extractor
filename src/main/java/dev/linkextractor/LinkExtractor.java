@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 public final class LinkExtractor {
-    private static final int DEFAULT_FETCH_LIMIT = 4;
     private static final String USAGE = "Usage: queued-link-extractor [--concurrency N] URL [URL ...]";
     private static final int QUEUE_CAPACITY = 16;
 
@@ -30,7 +29,7 @@ public final class LinkExtractor {
         }
 
         var urls = List.of(args);
-        int fetchLimit = DEFAULT_FETCH_LIMIT;
+        int fetchLimit = Pipeline.DEFAULT_FETCH_LIMIT;
         if (urls.getFirst().equals("--concurrency")) {
             if (urls.size() < 3) {
                 System.err.println(USAGE);
@@ -38,14 +37,19 @@ public final class LinkExtractor {
                 return;
             }
             try {
-                fetchLimit = Integer.parseInt(urls.get(1));
-                if (fetchLimit < 1) throw new NumberFormatException();
-            } catch (NumberFormatException invalid) {
-                System.err.println("--concurrency requires a positive integer");
+                fetchLimit = Pipeline.checkFetchLimit(Integer.parseInt(urls.get(1)));
+            } catch (IllegalArgumentException invalid) {
+                System.err.println("--concurrency requires an integer from 1 to " + Pipeline.MAX_FETCH_LIMIT);
                 exit.accept(2);
                 return;
             }
             urls = urls.subList(2, urls.size());
+        }
+
+        if (urls.stream().anyMatch(value -> value.startsWith("--"))) {
+            System.err.println(USAGE);
+            exit.accept(2);
+            return;
         }
 
         var json = new GsonBuilder().disableHtmlEscaping().create();

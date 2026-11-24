@@ -11,7 +11,7 @@ Install JDK 25 and point `JAVA_HOME` at it. The Gradle Wrapper downloads Gradle 
 build/install/queued-link-extractor/bin/queued-link-extractor https://example.org/
 ```
 
-Set the number of outstanding fetches with `--concurrency N` before the URLs. Use `--concurrency 1` for sequential downloads and input-order output.
+Set the number of outstanding fetches with `--concurrency N` before the URLs. The supported range is 1 through 64. Use `--concurrency 1` for sequential downloads and input-order output.
 
 On Windows, run `gradlew.bat clean build installDist` and use the `queued-link-extractor.bat` launcher under `build\install\queued-link-extractor\bin`.
 
@@ -40,6 +40,10 @@ Expected standard output
 ```
 
 Stop the web server with Ctrl+C.
+
+## Upgrading from sequential fetching
+
+Earlier versions emitted one line per argument in input order. The default now allows four downloads. Scripts should match each result to its argument using the one-based `input` field, or pass `--concurrency 1` to preserve positional order.
 
 ## Input and output contract
 

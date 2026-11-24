@@ -8,7 +8,7 @@ A slow server delays independent inputs when the producer downloads one page at 
 
 ## Decision
 
-Use a virtual thread for each admitted download. Keep a window of at most four outstanding fetch tasks by default and allow callers to choose the window size. A slot becomes available after its page or error enters the bounded queue. Submit the next input when a slot becomes available, even if an earlier fetch is still running.
+Use a virtual thread for each admitted download. Keep a window of at most four outstanding fetch tasks by default and allow callers to choose a window of 1 through 64. Reject larger values before starting any downloads, so a slow consumer cannot accumulate thousands of in-flight pages. A slot becomes available after its page or error enters the bounded queue. Submit the next input when a slot becomes available, even if an earlier fetch is still running.
 
 A single consumer writes outcomes in queue order. With parallel downloads this order can differ from the arguments. After each handoff, its worker decrements the count of inputs still awaiting handoff. Only the worker that reaches zero sends the end marker. A failed worker or an interrupted coordinator stops the run and interrupts active peers.
 

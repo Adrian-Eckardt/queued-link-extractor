@@ -74,7 +74,9 @@ class FetchConcurrencyIT {
         try (var capture = new PrintStream(messages, true, UTF_8)) {
             System.setErr(capture);
             for (var args : List.of(List.of("--concurrency"), List.of("--concurrency", "1"),
-                    List.of("--concurrency", "0", "unused"), List.of("--concurrency", "many", "unused"))) {
+                    List.of("--concurrency", "0", "unused"), List.of("--concurrency", "many", "unused"),
+                    List.of("--concurrency", "65", "unused"), List.of("unused", "--concurrency", "1"),
+                    List.of("--unknown", "unused"))) {
                 var code = new AtomicInteger();
                 LinkExtractor.run(args.toArray(String[]::new), code::set);
                 assertEquals(2, code.get());
@@ -82,6 +84,6 @@ class FetchConcurrencyIT {
         } finally {
             System.setErr(original);
         }
-        assertEquals(4, messages.toString(UTF_8).lines().count());
+        assertEquals(7, messages.toString(UTF_8).lines().count());
     }
 }

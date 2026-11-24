@@ -13,12 +13,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit) {
+    static final int DEFAULT_FETCH_LIMIT = 4;
+    static final int MAX_FETCH_LIMIT = 64;
+
     Pipeline {
-        if (fetchLimit < 1) throw new IllegalArgumentException("Concurrency must be positive");
+        checkFetchLimit(fetchLimit);
     }
 
-    Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity) {
-        this(fetch, parse, output, capacity, 1);
+    static int checkFetchLimit(int value) {
+        if (value < 1 || value > MAX_FETCH_LIMIT) {
+            throw new IllegalArgumentException("Concurrency must be between 1 and " + MAX_FETCH_LIMIT);
+        }
+        return value;
     }
 
     interface Fetcher {
