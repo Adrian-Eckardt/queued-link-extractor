@@ -73,7 +73,7 @@ class HttpPageFetcherIT {
         var results = new ArrayList<Outcome>();
         var fetcher = new HttpPageFetcher(client, Duration.ofSeconds(1), 256);
         try {
-            new Pipeline(fetcher, HtmlLinks::extract, results::add, 1)
+            new Pipeline(fetcher, HtmlLinks::extract, results::add, 1, 1)
                     .run(List.of(origin + "/slow", origin + "/good"));
             assertEquals(0, sent.getCount());
             assertEquals("fetch", results.getFirst().stage());

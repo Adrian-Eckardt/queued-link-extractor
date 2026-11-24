@@ -1,15 +1,32 @@
 package dev.linkextractor;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity) {
+record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit) {
+    static final int DEFAULT_FETCH_LIMIT = 4;
+    static final int MAX_FETCH_LIMIT = 64;
+
+    Pipeline {
+        checkFetchLimit(fetchLimit);
+    }
+
+    static int checkFetchLimit(int value) {
+        if (value < 1 || value > MAX_FETCH_LIMIT) {
+            throw new IllegalArgumentException("Concurrency must be between 1 and " + MAX_FETCH_LIMIT);
+        }
+        return value;
+    }
+
     interface Fetcher {
         Page get(String url) throws IOException, InterruptedException;
     }
@@ -24,30 +41,41 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
     private enum End implements Message { INSTANCE }
 
     void run(List<String> urls) throws InterruptedException, ExecutionException {
+        if (urls.isEmpty()) return;
         var queue = new ArrayBlockingQueue<Message>(capacity);
+        var remaining = new AtomicInteger(urls.size());
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var completed = new ExecutorCompletionService<Void>(workers);
-            var producer = completed.submit(() -> { produce(urls, queue); return null; });
-            var consumer = completed.submit(() -> { consume(queue); return null; });
+            var pending = new HashSet<Future<Void>>();
+            pending.add(completed.submit(() -> { consume(queue); return null; }));
+            var inputs = urls.listIterator();
             try {
-                var first = completed.take();
-                var peer = first == producer ? consumer : producer;
-                try {
-                    first.get();
-                } catch (ExecutionException primary) {
-                    workers.shutdownNow();
-                    collectPeerFailure(primary.getCause(), peer);
-                    throw primary;
-                }
-                peer.get();
+                do {
+                    // The consumer occupies one entry until all inputs have been handed off.
+                    while (inputs.hasNext() && pending.size() <= fetchLimit) {
+                        int input = inputs.nextIndex() + 1;
+                        String url = inputs.next();
+                        pending.add(completed.submit(() -> {
+                            queue.put(fetchPage(input, url));
+                            if (remaining.decrementAndGet() == 0) queue.put(End.INSTANCE);
+                            return null;
+                        }));
+                    }
+                    var finished = completed.take();
+                    pending.remove(finished);
+                    finished.get();
+                } while (!pending.isEmpty());
+            } catch (ExecutionException failure) {
+                workers.shutdownNow();
+                for (var peer : pending) collectPeerFailure(failure.getCause(), peer);
+                throw failure;
             } finally {
-                // A failed stage can leave its peer blocked on a full or empty queue.
                 workers.shutdownNow();
             }
         }
     }
 
-    static void collectPeerFailure(Throwable primary, java.util.concurrent.Future<Void> peer)
+    static void collectPeerFailure(Throwable primary, Future<Void> peer)
             throws InterruptedException {
         try {
             peer.get();
@@ -59,19 +87,12 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
         }
     }
 
-    private void produce(List<String> urls, BlockingQueue<Message> queue) throws InterruptedException {
-        int input = 0;
-        for (var url : urls) {
-            input++;
-            Message message;
-            try {
-                message = new Fetched(input, url, fetch.get(url));
-            } catch (IOException | RuntimeException e) {
-                message = new FetchFailure(Outcome.failure(input, url, "fetch", e));
-            }
-            queue.put(message);
+    private Message fetchPage(int input, String url) throws InterruptedException {
+        try {
+            return new Fetched(input, url, fetch.get(url));
+        } catch (IOException | RuntimeException e) {
+            return new FetchFailure(Outcome.failure(input, url, "fetch", e));
         }
-        queue.put(End.INSTANCE);
     }
 
     private void consume(BlockingQueue<Message> queue) throws InterruptedException {
