@@ -1,10 +1,9 @@
 package dev.linkextractor;
 
 import java.io.IOException;
+import dev.linkextractor.PageQueue.*;
 import java.util.HashSet;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executors;
@@ -12,12 +11,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit) {
+record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit, Policy policy) {
     static final int DEFAULT_FETCH_LIMIT = 4;
     static final int MAX_FETCH_LIMIT = 64;
 
     Pipeline {
         checkFetchLimit(fetchLimit);
+    }
+
+    Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit) {
+        this(fetch, parse, output, capacity, fetchLimit, Policy.BLOCK);
     }
 
     static int checkFetchLimit(int value) {
@@ -35,14 +38,9 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
         List<String> extract(Page page) throws IOException;
     }
 
-    private sealed interface Message {}
-    private record Fetched(int input, String url, Page page) implements Message {}
-    private record FetchFailure(Outcome outcome) implements Message {}
-    private enum End implements Message { INSTANCE }
-
     void run(List<String> urls) throws InterruptedException, ExecutionException {
         if (urls.isEmpty()) return;
-        var queue = new ArrayBlockingQueue<Message>(capacity);
+        var queue = new PageQueue(capacity, policy);
         var remaining = new AtomicInteger(urls.size());
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var completed = new ExecutorCompletionService<Void>(workers);
@@ -95,11 +93,12 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
         }
     }
 
-    private void consume(BlockingQueue<Message> queue) throws InterruptedException {
+    private void consume(PageQueue queue) throws InterruptedException {
         while (true) {
             switch (queue.take()) {
                 case Fetched page -> output.accept(parsePage(page));
                 case FetchFailure failure -> output.accept(failure.outcome());
+                case Dropped dropped -> output.accept(dropped.outcome());
                 case End ignored -> { return; }
             }
         }
