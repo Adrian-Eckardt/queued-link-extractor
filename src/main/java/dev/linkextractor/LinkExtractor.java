@@ -3,11 +3,10 @@ package dev.linkextractor;
 import com.google.gson.GsonBuilder;
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 public final class LinkExtractor {
-    private static final String USAGE = "Usage: queued-link-extractor [--concurrency N] URL [URL ...]";
+    private static final String USAGE = "Usage: queued-link-extractor [--concurrency N] [--overflow block|drop-oldest] URL [URL ...]";
     private static final int QUEUE_CAPACITY = 16;
 
     private static final class OutputClosed extends RuntimeException {
@@ -28,26 +27,11 @@ public final class LinkExtractor {
             return;
         }
 
-        var urls = List.of(args);
-        int fetchLimit = Pipeline.DEFAULT_FETCH_LIMIT;
-        if (urls.getFirst().equals("--concurrency")) {
-            if (urls.size() < 3) {
-                System.err.println(USAGE);
-                exit.accept(2);
-                return;
-            }
-            try {
-                fetchLimit = Pipeline.checkFetchLimit(Integer.parseInt(urls.get(1)));
-            } catch (IllegalArgumentException invalid) {
-                System.err.println("--concurrency requires an integer from 1 to " + Pipeline.MAX_FETCH_LIMIT);
-                exit.accept(2);
-                return;
-            }
-            urls = urls.subList(2, urls.size());
-        }
-
-        if (urls.stream().anyMatch(value -> value.startsWith("--"))) {
-            System.err.println(USAGE);
+        CommandLine command;
+        try {
+            command = CommandLine.parse(args);
+        } catch (IllegalArgumentException invalid) {
+            System.err.println(invalid.getMessage());
             exit.accept(2);
             return;
         }
@@ -62,8 +46,8 @@ public final class LinkExtractor {
                 if (System.out.checkError()) {
                     throw new OutputClosed();
                 }
-            }, QUEUE_CAPACITY, fetchLimit);
-            pipeline.run(urls);
+            }, QUEUE_CAPACITY, command.fetchLimit(), command.overflow());
+            pipeline.run(command.urls());
         } catch (ExecutionException failure) {
             if (failure.getCause() instanceof OutputClosed closed) {
                 System.err.println(closed.getMessage());

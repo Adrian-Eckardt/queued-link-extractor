@@ -48,6 +48,30 @@ class PageQueueTest {
     }
 
     @Test
+    void simultaneousAdmissionsEvictEachOriginalPageExactlyOnce() throws Exception {
+        int capacity = 8;
+        var queue = new PageQueue(capacity, Policy.DROP_OLDEST);
+        for (int index = 1; index <= capacity; index++) queue.put(page(index));
+        var start = new CountDownLatch(1);
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var jobs = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
+            for (int index = capacity + 1; index <= 2 * capacity; index++) {
+                var next = page(index);
+                jobs.add(workers.submit(() -> { start.await(); queue.put(next); return null; }));
+            }
+            start.countDown();
+            for (var job : jobs) job.get(2, TimeUnit.SECONDS);
+        }
+        for (int index = 1; index <= capacity; index++) {
+            assertEquals(index, assertInstanceOf(Dropped.class, queue.take()).outcome().input());
+        }
+        var retained = new java.util.TreeSet<Integer>();
+        for (int i = 0; i < capacity; i++) retained.add(assertInstanceOf(Fetched.class, queue.take()).input());
+        assertEquals(java.util.stream.IntStream.rangeClosed(capacity + 1, capacity * 2).boxed().toList(),
+                java.util.List.copyOf(retained));
+    }
+
+    @Test
     void rejectsAnEmptyQueueCapacity() {
         assertThrows(IllegalArgumentException.class, () -> new PageQueue(0, Policy.BLOCK));
     }
