@@ -6,6 +6,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      distribution-sha256: ${{ steps.package.outputs.sha256 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -14,6 +16,19 @@ jobs:
           java-version: '25'
           cache: gradle
       - run: ./gradlew clean build
+      - name: Verify the packaged CLI
+        run: ci/verify-distribution.sh build/distributions/*.zip
+      - name: Record the verified ZIP checksum
+        id: package
+        run: |
+          digest=$(sha256sum build/distributions/*.zip)
+          echo "sha256=${digest%% *}" >> "$GITHUB_OUTPUT"
+      - name: Save the verified CLI distribution
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: cli-distribution
+          path: build/distributions/*.zip
+          if-no-files-found: error
       # SonarQube example. Use a configured project and a reviewed action revision.
       # - name: Analyze Java code and import coverage
       #   uses: SonarSource/sonarqube-scan-action@<reviewed-commit-sha>
@@ -41,3 +56,36 @@ jobs:
         with:
           name: coverage-report
           path: build/reports/jacoco/test/html/
+
+  # Example for a Linux staging runner with JDK 25, unzip and a writable APP_ROOT.
+  # stage-cli:
+  #   needs: verify
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   runs-on: [self-hosted, linux, staging]
+  #   environment: staging
+  #   steps:
+  #     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+  #     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+  #       with:
+  #         name: cli-distribution
+  #         path: package
+  #     - name: Verify on staging and atomically switch the current release
+  #       shell: bash
+  #       env:
+  #         APP_ROOT: /srv/queued-link-extractor
+  #         EXPECTED_SHA256: ${{ needs.verify.outputs.distribution-sha256 }}
+  #       run: |
+  #         set -euo pipefail
+  #         archives=(package/*.zip)
+  #         [[ ${#archives[@]} == 1 && -f "${archives[0]}" ]]
+  #         archive=${archives[0]}
+  #         printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | sha256sum --check -
+  #         ci/verify-distribution.sh "$archive"
+  #         mkdir -p "$APP_ROOT/releases"
+  #         release=$(mktemp -d "$APP_ROOT/releases/$GITHUB_SHA.XXXXXX")
+  #         unzip -q "$archive" -d "$release"
+  #         chmod 755 "$release"
+  #         launchers=("$release"/*/bin/queued-link-extractor)
+  #         [[ ${#launchers[@]} == 1 && -x "${launchers[0]}" ]]
+  #         ln -s "${launchers[0]%/bin/*}" "$release/next"
+  #         mv -Tf "$release/next" "$APP_ROOT/current"

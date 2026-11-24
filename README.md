@@ -15,7 +15,18 @@ Set the number of outstanding fetches with `--concurrency N` before the URLs. Th
 
 On Windows, run `gradlew.bat clean build installDist` and use the `queued-link-extractor.bat` launcher under `build\install\queued-link-extractor\bin`.
 
-## Try two inputs locally
+## Try the packaged CLI
+
+On macOS or Linux, set `JAVA_HOME` to JDK 25 and install `unzip`, then run the same check used by CI. It unpacks the distribution ZIP, starts the JDK web server on an available loopback port, and checks both a relative link and an HTTP 404. It prints the two JSON Lines records when they match. A launcher that takes longer than 60 seconds fails the check with its partial output and the fixture server log. Pass the exact ZIP path if the directory contains several builds.
+
+```sh
+./gradlew clean build
+ci/verify-distribution.sh build/distributions/*.zip
+```
+
+To use a CI build, open a successful **Verify** run in GitHub Actions and download the **cli-distribution** artifact. Extract the artifact, then unzip the distribution inside it. With JDK 25 installed, run the launcher in its `bin` directory. The same run contains the HTML **test-reports** and **coverage-report** artifacts.
+
+## Try two inputs manually
 
 In one terminal, create a page and serve it with the JDK's web server.
 
@@ -89,17 +100,36 @@ Cooldowns are shared by scheme, host, and effective port. After a 429, admission
 | A page contains relative links, duplicates, or no anchors | [HtmlLinksTest](src/test/java/dev/linkextractor/HtmlLinksTest.java) checks the extracted list and HTML base handling. |
 | A redirect changes the base URI and another page returns 404 | [LinkExtractorIT](src/integrationTest/java/dev/linkextractor/LinkExtractorIT.java) checks the JSON Lines emitted by the CLI. |
 
-### Planned CI examples
+### CI examples
 
-The SonarQube and Mend examples are included as comments in the [verification workflow](.github/workflows/verify.yml). Further examples are planned alongside their milestones.
+The [verification workflow](.github/workflows/verify.yml) builds and tests the project, runs the packaged CLI, and publishes the distribution and HTML reports. Three commented examples show where SonarQube would import JaCoCo coverage, Mend would scan dependencies, and a Linux staging runner would check the ZIP checksum, run the packaged CLI locally, and atomically switch the `current` symlink to the verified release.
 
-| Milestone | What the workflow comments will illustrate |
+## Reviewer walkthrough
+
+```mermaid
+flowchart LR
+  U["Indexed URL arguments"] --> W["Bounded fetch window"]
+  W --> H["HTTP GET and origin cooldown"]
+  H --> Q["FIFO queue of pages and outcomes"]
+  Q --> C["One consumer parses HTML"]
+  C --> O["One JSON line per input"]
+```
+
+Start with the [producer/consumer test](src/test/java/dev/linkextractor/PipelineTest.java). It holds the final fetch open, observes the first result at the output writer, and releases the final fetch. Run that example with
+
+```sh
+./gradlew test --tests '*PipelineTest.emitsTheFirstResultWhileTheFinalFetchIsInFlightThenDrainsAndExits*'
+```
+
+The pull requests preserve the progression from that first example through the review fixes.
+
+| Change | Decision to inspect |
 | --- | --- |
-| 3 · Concurrent fetching | Where SonarQube analysis would run after Gradle and import the JaCoCo XML report to show coverage alongside code findings. |
-| 5 · HTTP resilience | Where a Mend software composition analysis scan would inspect the resolved Gradle dependencies and surface vulnerable components for review. |
-| 6 · Delivery | An optional deployment example showing how a successful build's CLI distribution could be promoted to a staging environment. |
-
-These examples will appear only as YAML comments. The coverage report from the **Verify** job remains available for reviewers to inspect directly.
+| [Basic extractor](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/1) | An empty queue can still have a fetch in flight. The final handoff signals completion. |
+| [Parallel downloads](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/2) | A free slot admits another URL while an earlier fetch is still running. |
+| [Queue overflow](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/3) | Eviction releases markup and preserves an indexed outcome, with bounded memory for notices. |
+| [HTTP resilience](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/4) | One origin's rate limit is shared across workers. Clock adjustments and simultaneous wakeups are covered by tests. |
+| [Packaged delivery](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/5) | CI runs the extracted ZIP and publishes that same distribution. |
 
 ## Design and development
 
