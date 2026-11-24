@@ -14,6 +14,10 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(25)
 }
 
+dependencies {
+    implementation("org.jsoup:jsoup:1.24.1")
+}
+
 testing.suites {
     withType<JvmTestSuite>().configureEach {
         useJUnitJupiter("6.1.3")
