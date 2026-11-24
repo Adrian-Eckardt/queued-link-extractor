@@ -39,7 +39,6 @@ public final class LinkExtractor {
 
         var json = new GsonBuilder().disableHtmlEscaping().create();
         try (var client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(5))
                 .build()) {
             var pipeline = new Pipeline(new HttpPageFetcher(client), HtmlLinks::extract, outcome -> {
