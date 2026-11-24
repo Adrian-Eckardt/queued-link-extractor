@@ -3,6 +3,7 @@ package dev.linkextractor;
 import java.util.List;
 import java.util.Objects;
 
+/** One JSON Lines record per input occurrence. Gson omits fields that do not apply to its status. */
 record Outcome(int input, String url, String status, List<String> links, String stage, String error) {
     static Outcome success(int input, String url, List<String> links) {
         return new Outcome(input, url, "ok", links, null, null);

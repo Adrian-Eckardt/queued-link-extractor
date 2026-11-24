@@ -3,6 +3,7 @@ package dev.linkextractor;
 import java.util.HashSet;
 import java.util.List;
 
+/** Options apply to the whole batch. URL arguments retain their order, including repeated occurrences. */
 record CommandLine(List<String> urls, int fetchLimit, PageQueue.Policy overflow) {
     static CommandLine parse(String[] args) {
         var words = List.of(args);

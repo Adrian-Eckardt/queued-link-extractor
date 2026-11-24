@@ -1,6 +1,6 @@
 # ADR 0002 — Signal completion through the page queue
 
-**Status** Accepted
+**Status** Accepted. [ADR 0003](0003-bounded-fetch-concurrency.md) extends the handoff protocol to multiple fetch workers.
 
 ## Context
 
@@ -14,4 +14,4 @@ The coordinator observes both tasks in completion order. A failure that prevents
 
 ## Consequences
 
-The same protocol works for an empty input and a full queue. A latch-controlled test holds the final fetch open until the first result is visible. Adding concurrent fetches later will require a single owner to append the marker after every fetch has finished its handoff.
+The same protocol works for an empty input and a full queue. A latch-controlled test holds the final fetch open until the first result is visible. With parallel downloads, the worker that completes the final handoff appends the marker.
