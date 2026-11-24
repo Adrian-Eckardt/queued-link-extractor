@@ -51,7 +51,17 @@ Supply HTTP or HTTPS URLs as command-line arguments. Each occurrence receives it
 
 Recoverable fetch and parse errors identify the input, stage, and reason. A completed batch exits with status zero, including batches with per-input errors. A failure that prevents the run from completing, such as a broken output stream, produces a nonzero exit. Fatal JVM errors terminate the batch. Running without arguments prints usage on standard error and exits with status zero. Invalid concurrency values or missing arguments after the option produce exit status 2.
 
-The queue holds up to 16 waiting pages. Each fetch holds its slot until its handoff succeeds. When the queue fills, the workers wait for the consumer to make room. The fetcher allows five seconds to connect and twenty seconds for a complete download, including the response body. It accepts up to 2 MiB of HTML or XHTML per page and reports missing or unsupported media types as fetch errors. HTTP 204 and 205 produce empty results. The HTTP charset takes precedence over an HTML charset declaration. Unfollowed redirects identify their status and destination when supplied.
+### Queue overflow
+
+By default a full queue blocks new handoffs. Pass `--overflow drop-oldest` before the URLs to make room for an arriving page or fetch error by evicting the oldest page still waiting to be parsed. Both options may appear together in either order. Example invocation
+
+```sh
+build/install/queued-link-extractor/bin/queued-link-extractor --concurrency 8 --overflow drop-oldest https://example.org/
+```
+
+An eviction produces a result such as `{"input":2,"url":"https://example.org/guide","status":"dropped"}`. The input index identifies the occurrence even if the URL appears twice. The current parse and queued errors complete normally. A reserved final slot admits the end marker after every input handoff. When output stalls, up to 16 lightweight drop notices may wait alongside the normal queue. Producers wait when that allowance is full. Use `--overflow block` to select the lossless default explicitly.
+
+The queue holds up to 16 normal entries. Each fetch holds its slot until its handoff succeeds. The fetcher allows five seconds to connect and twenty seconds for a complete download, including the response body. It accepts up to 2 MiB of HTML or XHTML per page and reports missing or unsupported media types as fetch errors. HTTP 204 and 205 produce empty results. The HTTP charset takes precedence over an HTML charset declaration. Unfollowed redirects identify their status and destination when supplied.
 
 ## Verification
 
@@ -59,6 +69,7 @@ The queue holds up to 16 waiting pages. Each fetch holds its slot until its hand
 
 | Behavior | Executable example |
 | --- | --- |
+| Multiple arrivals compete for a full queue | [PageQueueTest](src/test/java/dev/linkextractor/PageQueueTest.java) verifies which indices are dropped or retained, checks blocking in both modes, and protects fetch errors and completion. |
 | Independent downloads overlap within a limit | [FetchConcurrencyIT](src/integrationTest/java/dev/linkextractor/FetchConcurrencyIT.java) holds real HTTP responses open and measures peak overlap with both the default and an explicit limit. |
 | A slow final fetch leaves the queue temporarily empty | [PipelineTest](src/test/java/dev/linkextractor/PipelineTest.java) holds the final fetch open, observes the first output, then releases the fetch and checks both results. |
 | Fetch or parse fails in the middle of a batch | The same suite checks every outcome, including two occurrences of the same good URL. It also checks worker shutdown after an output failure. |
@@ -79,6 +90,6 @@ These examples will appear only as YAML comments. The coverage report from the *
 
 ## Design and development
 
-[ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. [ADR 0003](docs/adr/0003-bounded-fetch-concurrency.md) records how the fetch window and final handoff work. Later milestones cover optional oldest-page eviction and HTTP retry and rate-limit handling.
+[ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. [ADR 0003](docs/adr/0003-bounded-fetch-concurrency.md) records how the fetch window and final handoff work. [ADR 0004](docs/adr/0004-queue-overflow.md) records the eviction and reporting policy. A later milestone covers HTTP retry and rate-limit handling.
 
 AI assisted with drafting the implementation and tests. During development, the overlap test failed against an initial fetch-then-parse implementation. Running the producer and consumer independently made the first page visible while the second fetch was still blocked. The commit introducing the queue includes that test and the associated decision.

@@ -259,6 +259,48 @@ class PipelineTest {
     }
 
     @Test
+    void aSlowConsumerKeepsItsCurrentPageAndEmitsOneOutcomePerOccurrence() throws Exception {
+        var parsingFirst = new CountDownLatch(1);
+        var releaseParser = new CountDownLatch(1);
+        var fourthFetch = new CountDownLatch(1);
+        var thirdOutput = new CountDownLatch(1);
+        var outcomes = new ArrayList<Outcome>();
+        var pipeline = new Pipeline(url -> {
+            if (url.equals("second")) parsingFirst.await();
+            if (url.equals("fourth")) {
+                fourthFetch.countDown();
+                thirdOutput.await();
+            }
+            return PAGE;
+        }, HtmlLinks::extract, outcome -> {
+            outcomes.add(outcome);
+            if (outcome.input() == 3) thirdOutput.countDown();
+            if (outcome.input() == 1) {
+                parsingFirst.countDown();
+                try { assertTrue(releaseParser.await(4, TimeUnit.SECONDS)); }
+                catch (InterruptedException e) { throw new AssertionError(e); }
+            }
+        }, 1, 1, PageQueue.Policy.DROP_OLDEST);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var run = executor.submit(() -> {
+                pipeline.run(List.of("first", "second", "third", "fourth"));
+                return null;
+            });
+            try {
+                assertTrue(fourthFetch.await(3, TimeUnit.SECONDS), "third handoff must have displaced second");
+            } finally {
+                releaseParser.countDown();
+            }
+            run.get(3, TimeUnit.SECONDS);
+        }
+        assertEquals(List.of(1, 2, 3, 4), outcomes.stream().map(Outcome::input).toList());
+        assertEquals("ok", outcomes.getFirst().status());
+        assertEquals(Outcome.dropped(2, "second"), outcomes.get(1));
+        assertEquals("ok", outcomes.get(2).status());
+        assertEquals("ok", outcomes.getLast().status());
+    }
+
+    @Test
     void emptyInputTerminatesWithoutAnyOutput() throws Exception {
         var outcomes = new ArrayList<Outcome>();
         new Pipeline(url -> PAGE, HtmlLinks::extract, outcomes::add, 1, 4).run(List.of());

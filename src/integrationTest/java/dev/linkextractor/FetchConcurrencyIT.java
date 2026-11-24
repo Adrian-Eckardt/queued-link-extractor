@@ -84,6 +84,8 @@ class FetchConcurrencyIT {
         } finally {
             System.setErr(original);
         }
-        assertEquals(7, messages.toString(UTF_8).lines().count());
+        var lines = messages.toString(UTF_8).lines().toList();
+        assertEquals(14, lines.size());
+        for (int i = 1; i < lines.size(); i += 2) assertTrue(lines.get(i).contains("--overflow block|drop-oldest"));
     }
 }

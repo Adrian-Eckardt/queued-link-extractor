@@ -8,6 +8,10 @@ record Outcome(int input, String url, String status, List<String> links, String 
         return new Outcome(input, url, "ok", links, null, null);
     }
 
+    static Outcome dropped(int input, String url) {
+        return new Outcome(input, url, "dropped", null, null, null);
+    }
+
     static Outcome failure(int input, String url, String stage, Exception cause) {
         var detail = Objects.toString(cause.getMessage(), cause.getClass().getSimpleName());
         return new Outcome(input, url, "error", null, stage, detail);
