@@ -1,5 +1,5 @@
 plugins {
-    java
+    application
     jacoco
 }
 
@@ -14,7 +14,12 @@ java {
     toolchain.languageVersion = JavaLanguageVersion.of(25)
 }
 
+application {
+    mainClass = "dev.linkextractor.LinkExtractor"
+}
+
 dependencies {
+    implementation("com.google.code.gson:gson:2.15.0")
     implementation("org.jsoup:jsoup:1.24.1")
 }
 
