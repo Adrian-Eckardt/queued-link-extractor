@@ -17,7 +17,7 @@ On Windows, run `gradlew.bat clean build installDist` and use the `queued-link-e
 
 ## Try the packaged CLI
 
-On macOS or Linux, run the same check used by CI. It unpacks the distribution ZIP, starts the JDK web server on an available loopback port, and checks both a relative link and an HTTP 404. It prints the two JSON Lines records and exits with status zero when they match.
+On macOS or Linux, set `JAVA_HOME` to JDK 25 and install `unzip`, then run the same check used by CI. It unpacks the distribution ZIP, starts the JDK web server on an available loopback port, and checks both a relative link and an HTTP 404. It prints the two JSON Lines records when they match. A launcher that takes longer than 60 seconds fails the check with its partial output and the fixture server log. Pass the exact ZIP path if the directory contains several builds.
 
 ```sh
 ./gradlew clean build
@@ -102,7 +102,7 @@ Cooldowns are shared by scheme, host, and effective port. After a 429, admission
 
 ### CI examples
 
-The [verification workflow](.github/workflows/verify.yml) builds and tests the project, runs the packaged CLI, and publishes the distribution and HTML reports. Three commented examples show where SonarQube would import JaCoCo coverage, Mend would scan dependencies, and a staging runner would install the verified ZIP under its source revision.
+The [verification workflow](.github/workflows/verify.yml) builds and tests the project, runs the packaged CLI, and publishes the distribution and HTML reports. Three commented examples show where SonarQube would import JaCoCo coverage, Mend would scan dependencies, and a Linux staging runner would check the ZIP checksum, run the packaged CLI locally, and atomically switch the `current` symlink to the verified release.
 
 ## Reviewer walkthrough
 
