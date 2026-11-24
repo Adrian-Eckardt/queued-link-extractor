@@ -63,6 +63,19 @@ An eviction produces a result such as `{"input":2,"url":"https://example.org/gui
 
 The queue holds up to 16 normal entries. Each fetch holds its slot until its handoff succeeds. The fetcher allows five seconds to connect and twenty seconds for a complete download, including the response body. It accepts up to 2 MiB of HTML or XHTML per page and reports missing or unsupported media types as fetch errors. HTTP 204 and 205 produce empty results. The HTTP charset takes precedence over an HTML charset declaration. Unfollowed redirects identify their status and destination when supplied.
 
+### HTTP status and retry behavior
+
+Each URL has a twenty-second deadline for the entire operation, including redirects, cooldown waits and reading the final body. The client follows up to five HTTP redirects and refuses HTTPS downgrades.
+
+| Response | Outcome |
+| --- | --- |
+| 401 Unauthorized or 403 Forbidden | Emit a terminal fetch error with the HTTP status. The client sends no credentials and makes one attempt at that endpoint. |
+| 429 Too Many Requests | Honor `Retry-After` in seconds or as an HTTP date. A missing or invalid header defaults to one second. Allow one retry per input and five cumulative seconds of waiting within the input deadline. |
+| Another 429 after the retry, or a longer cooldown than the remaining budget | Emit a fetch error. Other inputs for that origin observe the longest outstanding server delay, even when this input gives up. |
+| Other unsuccessful status or transport error | Emit a fetch error and continue processing the batch. |
+
+Cooldowns are shared by scheme, host, and effective port. Redirects are checked at each hop. Waiting occupies one fetch slot. Other admitted origins can proceed independently.
+
 ## Verification
 
 `./gradlew clean build` runs both JUnit suites and checks for zero missed production lines, branches, and bytecode instructions with JaCoCo. Run `./gradlew test` for unit tests or `./gradlew integrationTest` for the CLI tests against a loopback HTTP server. Open `build/reports/jacoco/test/html/index.html` for the combined coverage report. The GitHub Actions **Verify** workflow runs the clean build on Linux and saves the coverage and test reports as downloadable artifacts.
@@ -78,7 +91,7 @@ The queue holds up to 16 normal entries. Each fetch holds its slot until its han
 
 ### Planned CI examples
 
-Milestone 3 adds a commented SonarQube example to the [verification workflow](.github/workflows/verify.yml). Further examples are planned alongside their milestones.
+The SonarQube and Mend examples are included as comments in the [verification workflow](.github/workflows/verify.yml). Further examples are planned alongside their milestones.
 
 | Milestone | What the workflow comments will illustrate |
 | --- | --- |
@@ -90,6 +103,6 @@ These examples will appear only as YAML comments. The coverage report from the *
 
 ## Design and development
 
-[ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. [ADR 0003](docs/adr/0003-bounded-fetch-concurrency.md) records how the fetch window and final handoff work. [ADR 0004](docs/adr/0004-queue-overflow.md) records the eviction and reporting policy. A later milestone covers HTTP retry and rate-limit handling.
+[ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. [ADR 0003](docs/adr/0003-bounded-fetch-concurrency.md) records how the fetch window and final handoff work. [ADR 0004](docs/adr/0004-queue-overflow.md) records the eviction and reporting policy. [ADR 0005](docs/adr/0005-http-rate-limits.md) defines the HTTP deadline, retry budget, and shared cooldown.
 
 AI assisted with drafting the implementation and tests. During development, the overlap test failed against an initial fetch-then-parse implementation. Running the producer and consumer independently made the first page visible while the second fetch was still blocked. The commit introducing the queue includes that test and the associated decision.

@@ -6,11 +6,15 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
-import java.time.ZonedDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BinaryOperator;
 
 final class OriginCooldowns {
     interface Sleeper {
@@ -25,6 +29,9 @@ final class OriginCooldowns {
             return new Origin(scheme, uri.getHost().toLowerCase(Locale.ROOT), port);
         }
     }
+
+    private static final DateTimeFormatter ASCTIME = DateTimeFormatter
+            .ofPattern("EEE MMM [ ]d HH:mm:ss uuuu", Locale.US).withZone(ZoneOffset.UTC);
 
     private final ConcurrentHashMap<Origin, Instant> resumeTimes = new ConcurrentHashMap<>();
     private final InstantSource clock;
@@ -42,7 +49,7 @@ final class OriginCooldowns {
     void record(URI uri, String retryAfter) {
         var now = now();
         Instant until = retryTime(retryAfter.strip(), now);
-        resumeTimes.merge(Origin.of(uri), until, java.util.function.BinaryOperator.maxBy(Instant::compareTo));
+        resumeTimes.merge(Origin.of(uri), until, BinaryOperator.maxBy(Instant::compareTo));
     }
 
     private static Instant retryTime(String value, Instant now) {
@@ -53,11 +60,18 @@ final class OriginCooldowns {
                 return Instant.MAX;
             }
         }
-        try {
-            return ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
-        } catch (DateTimeParseException invalidOrAbsent) {
-            return now.plusSeconds(1);
+        // HTTP recipients also accept the historical RFC 850 and asctime date formats.
+        var rfc850 = new DateTimeFormatterBuilder().appendPattern("EEEE, dd-MMM-")
+                .appendValueReduced(ChronoField.YEAR, 2, 2, now.atZone(ZoneOffset.UTC).getYear() - 49)
+                .appendPattern(" HH:mm:ss 'GMT'").toFormatter(Locale.US).withZone(ZoneOffset.UTC);
+        for (var format : List.of(DateTimeFormatter.RFC_1123_DATE_TIME, rfc850, ASCTIME)) {
+            try {
+                return Instant.from(format.parse(value));
+            } catch (DateTimeParseException unrecognized) {
+                // Try the next HTTP date form.
+            }
         }
+        return now.plusSeconds(1);
     }
 
     Duration await(URI uri, Duration budget) throws IOException, InterruptedException {

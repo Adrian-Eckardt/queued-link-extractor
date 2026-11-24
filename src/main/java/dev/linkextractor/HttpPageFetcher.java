@@ -9,6 +9,7 @@ import java.net.http.HttpResponse.BodySubscriber;
 import java.net.http.HttpResponse.BodySubscribers;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.time.InstantSource;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -16,6 +17,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.io.Closer;
 
 record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, OriginCooldowns cooldowns) implements Pipeline.Fetcher {
     private static final Set<String> HTML_TYPES = Set.of("text/html", "application/xhtml+xml");
@@ -31,7 +33,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
     }
 
     HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes) {
-        this(client, deadline, maxBytes, new OriginCooldowns(java.time.InstantSource.system(), Thread::sleep));
+        this(client, deadline, maxBytes, new OriginCooldowns(InstantSource.system(), Thread::sleep));
     }
 
     HttpPageFetcher(HttpClient client) {
@@ -68,7 +70,12 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
                 uri = target;
                 continue;
             }
-            throw new IOException("HTTP " + status);
+            String reason = switch (status) {
+                case 401 -> " Unauthorized";
+                case 403 -> " Forbidden";
+                default -> "";
+            };
+            throw new IOException("HTTP " + status + reason);
         }
     }
 
@@ -108,7 +115,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
         if (status / 100 != 2) {
             // Return status and headers immediately. Error bodies can be large or slow.
             return BodySubscribers.mapping(BodySubscribers.ofInputStream(), stream -> {
-                org.apache.hc.core5.io.Closer.closeQuietly(stream);
+                Closer.closeQuietly(stream);
                 return null;
             });
         }

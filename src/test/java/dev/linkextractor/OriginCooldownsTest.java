@@ -45,6 +45,16 @@ class OriginCooldownsTest {
     }
 
     @Test
+    void acceptsHistoricalHttpDatesAndExpiredDates() throws Exception {
+        cooldowns.record(A, "Thursday, 01-Jan-26 00:00:02 GMT");
+        assertEquals(Duration.ofSeconds(3), cooldowns.await(A, FIVE));
+        cooldowns.record(A, "Thu Jan  1 00:00:05 2026");
+        assertEquals(Duration.ofSeconds(2), cooldowns.await(A, FIVE));
+        cooldowns.record(A, "Sunday, 06-Nov-94 08:49:37 GMT");
+        assertEquals(FIVE, cooldowns.await(A, FIVE));
+    }
+
+    @Test
     void defaultsInvalidHeadersAndNeverTruncatesAnExcessiveServerDelay() throws Exception {
         cooldowns.record(A, "not-a-date");
         assertEquals(Duration.ofSeconds(4), cooldowns.await(A, FIVE));
