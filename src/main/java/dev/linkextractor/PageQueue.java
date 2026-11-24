@@ -1,6 +1,8 @@
 package dev.linkextractor;
 
 import java.util.LinkedList;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 final class PageQueue {
     enum Policy { BLOCK, DROP_OLDEST }
@@ -13,6 +15,9 @@ final class PageQueue {
     private final int capacity;
     private final Policy policy;
     private final LinkedList<Message> messages = new LinkedList<>();
+    private final ReentrantLock lock = new ReentrantLock(true);
+    private final Condition readable = lock.newCondition();
+    private final Condition writable = lock.newCondition();
     private int notices;
 
     PageQueue(int capacity, Policy policy) {
@@ -21,16 +26,19 @@ final class PageQueue {
         this.policy = policy;
     }
 
-    synchronized void put(Message message) throws InterruptedException {
-        while (messages.size() - notices >= capacity) {
-            if (policy == Policy.DROP_OLDEST && message instanceof Fetched
-                    && notices < capacity && replaceOldestPage()) {
-                break;
+    void put(Message message) throws InterruptedException {
+        lock.lockInterruptibly();
+        try {
+            // End has a reserved final slot and follows every input handoff.
+            while (message != End.INSTANCE && messages.size() - notices >= capacity) {
+                if (policy == Policy.DROP_OLDEST && notices < capacity && replaceOldestPage()) break;
+                writable.await();
             }
-            wait();
+            messages.addLast(message);
+            readable.signal();
+        } finally {
+            lock.unlock();
         }
-        messages.addLast(message);
-        notifyAll();
     }
 
     private boolean replaceOldestPage() {
@@ -45,11 +53,16 @@ final class PageQueue {
         return false;
     }
 
-    synchronized Message take() throws InterruptedException {
-        while (messages.isEmpty()) wait();
-        var message = messages.removeFirst();
-        if (message instanceof Dropped) notices--;
-        notifyAll();
-        return message;
+    Message take() throws InterruptedException {
+        lock.lockInterruptibly();
+        try {
+            while (messages.isEmpty()) readable.await();
+            var message = messages.removeFirst();
+            if (message instanceof Dropped) notices--;
+            writable.signalAll();
+            return message;
+        } finally {
+            lock.unlock();
+        }
     }
 }

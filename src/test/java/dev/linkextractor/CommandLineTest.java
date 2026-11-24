@@ -21,6 +21,20 @@ class CommandLineTest {
     }
 
     @Test
+    void explainsUnknownOptionsMissingValuesAndInvalidLimits() {
+        for (String[] args : List.of(new String[]{"--help"}, new String[]{"--help", "url"})) {
+            assertEquals("Unknown option: --help", assertThrows(IllegalArgumentException.class,
+                    () -> CommandLine.parse(args)).getMessage());
+        }
+        assertEquals("Missing value for --overflow", assertThrows(IllegalArgumentException.class,
+                () -> CommandLine.parse(new String[]{"--overflow", "--concurrency", "1", "url"})).getMessage());
+        for (String limit : List.of("many", "0", "65")) {
+            assertEquals("--concurrency requires an integer from 1 to 64", assertThrows(IllegalArgumentException.class,
+                    () -> CommandLine.parse(new String[]{"--concurrency", limit, "url"})).getMessage());
+        }
+    }
+
+    @Test
     void rejectsUnknownPoliciesAndDuplicateOptions() {
         assertThrows(IllegalArgumentException.class,
                 () -> CommandLine.parse(new String[]{"--overflow", "other", "url"}));

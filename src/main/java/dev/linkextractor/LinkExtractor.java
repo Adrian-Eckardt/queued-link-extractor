@@ -32,6 +32,7 @@ public final class LinkExtractor {
             command = CommandLine.parse(args);
         } catch (IllegalArgumentException invalid) {
             System.err.println(invalid.getMessage());
+            System.err.println(USAGE);
             exit.accept(2);
             return;
         }

@@ -98,13 +98,26 @@ class PageQueueTest {
     }
 
     @Test
-    void preservesFetchErrorsAndWaitsToAppendTheEndMarker() throws Exception {
+    void aFetchFailureCanClaimTheOldestWaitingPageAtCapacity() throws Exception {
+        var queue = new PageQueue(1, Policy.DROP_OLDEST);
+        var error = new FetchFailure(Outcome.failure(2, "bad", "fetch", new java.io.IOException("offline")));
+        queue.put(page(1));
+        queue.put(error);
+        queue.put(End.INSTANCE);
+        assertEquals(new Dropped(Outcome.dropped(1, "same")), queue.take());
+        assertSame(error, queue.take());
+        assertSame(End.INSTANCE, queue.take());
+    }
+
+    @Test
+    void preservesFetchErrorsAndAppendsEndEvenAtCapacity() throws Exception {
         var queue = new PageQueue(1, Policy.DROP_OLDEST);
         var error = new FetchFailure(Outcome.failure(1, "same", "fetch", new java.io.IOException("offline")));
         var next = page(2);
         queue.put(error);
         assertBackpressure(queue, next, error);
-        assertBackpressure(queue, End.INSTANCE, next);
+        queue.put(End.INSTANCE);
+        assertSame(next, queue.take());
         assertSame(End.INSTANCE, queue.take());
     }
 }

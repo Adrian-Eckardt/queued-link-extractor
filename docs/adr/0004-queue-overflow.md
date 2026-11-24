@@ -8,9 +8,9 @@ When parsing or output is slow, fetched pages accumulate. Blocking producers pre
 
 ## Decision
 
-Use blocking backpressure by default. In `drop-oldest` mode, a new page arriving at a full queue replaces the oldest waiting page with a lightweight dropped outcome and takes the freed slot at the back of the queue. The queue makes that replacement and admission under the same lock. Oldest refers to handoff order. The page currently being parsed, fetch errors, and the end marker are ineligible for eviction.
+Use blocking backpressure by default. In `drop-oldest` mode, a page or fetch error arriving at a full queue replaces the oldest waiting page with a lightweight dropped outcome and takes the freed slot at the back of the queue. The queue makes that replacement and admission under the same fair lock. Oldest refers to handoff order. The page currently being parsed, fetch errors, and the end marker are ineligible for eviction.
 
-Keep at most 16 normal entries and 16 pending drop notices. Once the notice allowance fills, or the full queue contains no eligible page, wait for the consumer. The single consumer emits notices in their original queue positions. It receives the end marker only after all input handoffs.
+Keep at most 16 normal entries and 16 pending drop notices, plus one reserved slot for the final end marker. Once the notice allowance fills, or the full queue contains no eligible page, wait for the consumer. The single consumer emits notices in their original queue positions. It receives the end marker only after all input handoffs.
 
 ## Consequences
 
