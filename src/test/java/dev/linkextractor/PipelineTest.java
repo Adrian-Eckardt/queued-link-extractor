@@ -14,7 +14,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 class PipelineTest {
-    private static final Page PAGE = new Page(URI.create("https://example.org/"), "<a href='/guide'>");
+    private static final Page PAGE = new Page(URI.create("https://example.org/"), new Page.Markup("<a href='/guide'>".getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+    private static final Page UNPARSEABLE = new Page(PAGE.effectiveUri(), new Page.Markup(new byte[0], null));
 
     @Test
     void emitsTheFirstResultWhileTheFinalFetchIsInFlightThenDrainsAndExits() throws Exception {
@@ -82,9 +83,9 @@ class PipelineTest {
         var pipeline = new Pipeline(url -> {
             if (url.equals("offline")) throw new java.io.IOException("Timed out");
             if (url.equals("invalid")) throw new IllegalArgumentException("Invalid URL");
-            return url.equals("unparseable") ? new Page(PAGE.effectiveUri(), "broken") : PAGE;
+            return url.equals("unparseable") ? UNPARSEABLE : PAGE;
         }, page -> {
-            if (page.html().equals("broken")) throw new IllegalStateException();
+            if (page == UNPARSEABLE) throw new IllegalStateException();
             return HtmlLinks.extract(page);
         }, outcomes::add, 1);
 

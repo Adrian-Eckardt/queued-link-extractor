@@ -41,11 +41,11 @@ Stop the web server with Ctrl+C.
 
 ## Input and output contract
 
-Supply HTTP or HTTPS URLs as command-line arguments. Each occurrence receives its own one-based input index, including repeated URLs. For each input, the command emits and flushes one JSON object on standard output. A successful result contains the resolved targets of `a[href]` elements in document order, including duplicates. Relative links use the effective URI after redirects and honor an HTML base element. A page with zero links produces an empty list.
+Supply HTTP or HTTPS URLs as command-line arguments. Each occurrence receives its own one-based input index, including repeated URLs. For each input, the command emits and flushes one JSON object on standard output. A successful result contains the resolved targets of `a[href]` elements in document order, including duplicates. Relative links use the effective URI after redirects and honor an HTML base element. Targets that jsoup cannot resolve are omitted. Resolvable schemes such as `mailto:`, `tel:`, `data:`, and `javascript:` are included as text. A page with zero links produces an empty list.
 
-Fetch and parse errors identify the input, stage, and reason. A completed batch exits with status zero, including batches with per-input errors. A failure that prevents the run from completing, such as a broken output stream, produces a nonzero exit. Running without arguments prints usage on standard error and exits with status zero.
+Recoverable fetch and parse errors identify the input, stage, and reason. A completed batch exits with status zero, including batches with per-input errors. A failure that prevents the run from completing, such as a broken output stream, produces a nonzero exit. Fatal JVM errors terminate the batch. Running without arguments prints usage on standard error and exits with status zero.
 
-The queue holds up to 16 waiting pages. When it fills, the producer waits for the consumer to make room. The fetcher sets a five-second connection timeout and a twenty-second request timeout. It reports unsuccessful HTTP statuses as fetch errors.
+The queue holds up to 16 waiting pages. When it fills, the producer waits for the consumer to make room. The fetcher allows five seconds to connect and twenty seconds for a complete download, including the response body. It accepts up to 2 MiB of HTML or XHTML per page and reports missing or unsupported media types as fetch errors. HTTP 204 and 205 produce empty results. The HTTP charset takes precedence over an HTML charset declaration. Unfollowed redirects identify their status and destination when supplied.
 
 ## Verification
 

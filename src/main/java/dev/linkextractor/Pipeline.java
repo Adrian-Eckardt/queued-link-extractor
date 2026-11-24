@@ -8,11 +8,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
-record Pipeline(Fetcher fetch, Function<Page, List<String>> parse, Consumer<Outcome> output, int capacity) {
+record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity) {
     interface Fetcher {
         Page get(String url) throws IOException, InterruptedException;
+    }
+
+    interface Parser {
+        List<String> extract(Page page) throws IOException;
     }
 
     private sealed interface Message {}
@@ -63,8 +66,8 @@ record Pipeline(Fetcher fetch, Function<Page, List<String>> parse, Consumer<Outc
 
     private Outcome parsePage(Fetched fetched) {
         try {
-            return Outcome.success(fetched.input(), fetched.url(), parse.apply(fetched.page()));
-        } catch (RuntimeException e) {
+            return Outcome.success(fetched.input(), fetched.url(), parse.extract(fetched.page()));
+        } catch (IOException | RuntimeException e) {
             return Outcome.failure(fetched.input(), fetched.url(), "parse", e);
         }
     }

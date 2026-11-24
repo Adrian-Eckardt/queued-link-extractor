@@ -20,6 +20,7 @@ application {
 
 dependencies {
     implementation("com.google.code.gson:gson:2.15.0")
+    implementation("org.apache.httpcomponents.core5:httpcore5:5.4.4")
     implementation("org.jsoup:jsoup:1.24.1")
 }
 
