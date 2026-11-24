@@ -117,7 +117,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
     private BodySubscriber<Page.Markup> readHtml(HttpResponse.ResponseInfo response) {
         int status = response.statusCode();
         if (status / 100 != 2) {
-            // Only the headers matter for redirects and HTTP errors. Close the body to bound the wait.
+            // Return status and headers immediately. Error bodies can be large or slow.
             return BodySubscribers.mapping(BodySubscribers.ofInputStream(), stream -> {
                 Closer.closeQuietly(stream);
                 return null;

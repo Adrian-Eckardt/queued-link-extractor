@@ -99,7 +99,7 @@ Each URL has a five-second connection timeout and a twenty-second deadline acros
 
 Cooldowns are shared by scheme, host, and effective port. After a 429, admissions to that origin are spaced at least 100 ms apart for the rest of the batch. Cooldowns use elapsed time, so a wall-clock adjustment cannot move the retry. A URL held back by another input’s response gets an origin-cooldown diagnostic. Redirects are checked at each hop. Waiting occupies one fetch slot. Other admitted origins can proceed independently.
 
-**Known HTTP/2 limitation.** In a public-endpoint check, a redirect and a persistent 429 intermittently produced a timeout or a stream-cancellation error. Isolated reruns also produced the expected redirect links and retry diagnostic. The cause is still open. The loopback tests below exercise the status-handling policy using HTTP/1.1.
+**HTTP/2 regression.** A live run exposed an intermittent stream cancellation after redirect and rate-limit headers arrived. [PR #7](https://github.com/Adrian-Eckardt/queued-link-extractor/pull/7) shows the failing loopback test and the change that preserves those headers when an unread body is closed. A slow server can still exhaust the twenty-second input deadline.
 
 ## Verification
 
