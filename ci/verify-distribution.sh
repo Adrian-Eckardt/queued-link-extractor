@@ -21,8 +21,10 @@ unzip -q "$1" -d "$work/dist"
 mkdir "$work/pages"
 echo '<a href="guide">Guide</a>' > "$work/pages/index.html"
 
-LC_ALL=C "${JAVA_HOME:?Set JAVA_HOME to JDK 25}/bin/jwebserver" -b 127.0.0.1 -p 0 -d "$work/pages" > "$work/server.log" 2>&1 &
-server_pid=$!
+{
+    LC_ALL=C "${JAVA_HOME:?Set JAVA_HOME to JDK 25}/bin/jwebserver" -b 127.0.0.1 -p 0 -d "$work/pages" &
+    server_pid=$!
+} > "$work/server.log" 2>&1
 base=
 for ((attempt=0; attempt<100; attempt++)); do
     base=$(awk '/^URL http:\/\/127\.0\.0\.1:[0-9]+\/$/ {print $2; exit}' "$work/server.log")
