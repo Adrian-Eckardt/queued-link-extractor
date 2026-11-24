@@ -58,6 +58,18 @@ The queue holds up to 16 waiting pages. When it fills, the producer waits for th
 | A page contains relative links, duplicates, or no anchors | [HtmlLinksTest](src/test/java/dev/linkextractor/HtmlLinksTest.java) checks the extracted list and HTML base handling. |
 | A redirect changes the base URI and another page returns 404 | [LinkExtractorIT](src/integrationTest/java/dev/linkextractor/LinkExtractorIT.java) checks the JSON Lines emitted by the CLI. |
 
+### Planned CI examples
+
+Later milestones will add commented examples to the [verification workflow](.github/workflows/verify.yml). The executable checks will continue to grow alongside the features they test.
+
+| Milestone | What the workflow comments will illustrate |
+| --- | --- |
+| 3 · Concurrent fetching | Where SonarQube analysis would run after Gradle and import the JaCoCo XML report to show coverage alongside code findings. |
+| 5 · HTTP resilience | Where a Mend software composition analysis scan would inspect the resolved Gradle dependencies and surface vulnerable components for review. |
+| 6 · Delivery | An optional deployment example showing how a successful build's CLI distribution could be promoted to a staging environment. |
+
+These examples will appear only as YAML comments. The coverage report from the **Verify** job remains available for reviewers to inspect directly.
+
 ## Design and development
 
 [ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. Later milestones cover bounded concurrent downloads, optional oldest-page eviction, and HTTP retry and rate-limit handling.
