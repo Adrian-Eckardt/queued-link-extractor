@@ -109,19 +109,148 @@ class HttpPageFetcherIT {
     }
 
     @Test
+    void retriesOneRateLimitedGetAndStopsOnPersistent429OrAuthorizationErrors() throws Exception {
+        var fetcher = new HttpPageFetcher(client);
+        for (int status : new int[]{401, 403, 429}) {
+            var hits = new java.util.concurrent.atomic.AtomicInteger();
+            server.createContext("/s" + status, exchange -> {
+                try (exchange) {
+                    hits.incrementAndGet();
+                    exchange.getResponseHeaders().set("Retry-After", "0");
+                    exchange.sendResponseHeaders(status, -1);
+                }
+            });
+            var error = assertThrows(IOException.class, () -> fetcher.get(origin + "/s" + status));
+            assertTrue(error.getMessage().contains("HTTP " + status));
+            assertEquals(status == 429 ? 2 : 1, hits.get());
+        }
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/recover", exchange -> {
+            try (exchange) {
+                exchange.getResponseHeaders().set("Retry-After", "0");
+                exchange.sendResponseHeaders(attempts.incrementAndGet() == 1 ? 429 : 204, -1);
+            }
+        });
+        assertTrue(HtmlLinks.extract(fetcher.get(origin + "/recover")).isEmpty());
+        assertEquals(2, attempts.get());
+    }
+
+    @Test
+    void sharedCooldownGatesRedirectHopsWhileAnotherOriginCompletes() throws Exception {
+        var now = new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.EPOCH);
+        var sleeping = new CountDownLatch(2);
+        var release = new CountDownLatch(1);
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var firstWait = new CountDownLatch(1);
+        server.createContext("/limited", exchange -> {
+            try (exchange) {
+                int status = hits.incrementAndGet() == 1 ? 429 : 204;
+                exchange.sendResponseHeaders(status, -1);
+            }
+        });
+        var other = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String otherOrigin = "http://127.0.0.1:" + other.getAddress().getPort();
+        other.createContext("/good", exchange -> { try (exchange) { exchange.sendResponseHeaders(204, -1); } });
+        other.createContext("/forward", exchange -> {
+            try (exchange) {
+                exchange.getResponseHeaders().set("Location", origin + "/limited");
+                exchange.sendResponseHeaders(302, -1);
+            }
+        });
+        other.start();
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            // Both waits use virtual time and release together after the healthy request finishes.
+            var observed = new OriginCooldowns(now::get, delay -> {
+                firstWait.countDown();
+                sleeping.countDown();
+                release.await();
+                now.set(java.time.Instant.EPOCH.plus(delay));
+            });
+            var shared = new HttpPageFetcher(client, Duration.ofSeconds(10), 256, observed);
+            var first = workers.submit(() -> shared.get(origin + "/limited"));
+            try {
+                assertTrue(firstWait.await(2, TimeUnit.SECONDS));
+                var redirected = workers.submit(() -> shared.get(otherOrigin + "/forward"));
+                assertTrue(sleeping.await(2, TimeUnit.SECONDS));
+                assertEquals(1, hits.get());
+                assertTrue(HtmlLinks.extract(shared.get(otherOrigin + "/good")).isEmpty());
+                release.countDown();
+                assertEquals(origin + "/limited", redirected.get(2, TimeUnit.SECONDS).effectiveUri().toString());
+                assertTrue(HtmlLinks.extract(first.get(2, TimeUnit.SECONDS)).isEmpty());
+                assertEquals(3, hits.get());
+            } finally {
+                release.countDown();
+            }
+        } finally {
+            other.stop(0);
+        }
+    }
+
+    @Test
+    void aLongRetryAfterRejectsLaterSameOriginInputsWithoutAnotherRequest() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/", exchange -> {
+            try (exchange) {
+                hits.incrementAndGet();
+                exchange.getResponseHeaders().set("Retry-After", "120");
+                exchange.sendResponseHeaders(429, -1);
+            }
+        });
+        var fetcher = new HttpPageFetcher(client);
+        for (var path : List.of("/a", "/b")) {
+            assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + path))
+                    .getMessage().contains("exceeds wait budget"));
+        }
+        assertEquals(1, hits.get());
+    }
+
+    @Test
+    void refusesInvalidRedirectsAndStopsRedirectLoops() throws Exception {
+        server.createContext("/redirects", exchange -> {
+            try (exchange) {
+                String location = exchange.getRequestURI().getQuery();
+                if (location != null) exchange.getResponseHeaders().set("Location", location);
+                exchange.sendResponseHeaders(302, -1);
+            }
+        });
+        server.createContext("/loop", exchange -> {
+            try (exchange) {
+                exchange.getResponseHeaders().set("Location", "/loop");
+                exchange.sendResponseHeaders(301, -1);
+            }
+        });
+        var fetcher = new HttpPageFetcher(client);
+        assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + "/redirects"))
+                .getMessage().contains("redirect not followed"));
+        assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + "/redirects?ftp://example.org"))
+                .getMessage().contains("redirect not followed to ftp://"));
+        assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + "/loop"))
+                .getMessage().contains("redirect limit exceeded"));
+        assertThrows(java.net.http.HttpTimeoutException.class,
+                () -> new HttpPageFetcher(client, Duration.ZERO, 256).get(origin + "/unused"));
+        try (var redirectsAutomatically = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()) {
+            assertThrows(IllegalArgumentException.class, () -> new HttpPageFetcher(redirectsAutomatically));
+        }
+        var http = java.net.URI.create("http://example.org");
+        var https = java.net.URI.create("https://example.org");
+        assertTrue(HttpPageFetcher.canFollow(http, https));
+        assertFalse(HttpPageFetcher.canFollow(https, http));
+    }
+
+    @Test
     void reportsUnfollowedRedirectsAndHandlesBothNoContentStatuses() throws Exception {
         var fetcher = new HttpPageFetcher(client);
         server.createContext("/redirect", exchange -> {
             try (exchange) {
                 exchange.getResponseHeaders().set("Location", "/destination");
-                exchange.sendResponseHeaders(302, -1);
+                exchange.sendResponseHeaders(300, -1);
             }
         });
         server.createContext("/reset", exchange -> {
             try (exchange) { exchange.sendResponseHeaders(205, -1); }
         });
         String error = assertThrows(IOException.class, () -> fetcher.get(origin + "/redirect")).getMessage();
-        assertTrue(error.contains("HTTP 302 (redirect not followed to /destination)"), error);
+        assertTrue(error.contains("HTTP 300 (redirect not followed to /destination)"), error);
         assertTrue(HtmlLinks.extract(fetcher.get(origin + "/reset")).isEmpty());
     }
 }
