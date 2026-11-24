@@ -17,6 +17,7 @@ record Pipeline(Fetcher fetch, Function<Page, List<String>> parse, Consumer<Outc
 
     private sealed interface Message {}
     private record Fetched(int input, String url, Page page) implements Message {}
+    private record FetchFailure(Outcome outcome) implements Message {}
     private enum End implements Message { INSTANCE }
 
     void run(List<String> urls) throws InterruptedException, ExecutionException {
@@ -35,17 +36,36 @@ record Pipeline(Fetcher fetch, Function<Page, List<String>> parse, Consumer<Outc
         }
     }
 
-    private void produce(List<String> urls, BlockingQueue<Message> queue) throws IOException, InterruptedException {
+    private void produce(List<String> urls, BlockingQueue<Message> queue) throws InterruptedException {
         int input = 0;
         for (var url : urls) {
-            queue.put(new Fetched(++input, url, fetch.get(url)));
+            input++;
+            Message message;
+            try {
+                message = new Fetched(input, url, fetch.get(url));
+            } catch (IOException | RuntimeException e) {
+                message = new FetchFailure(Outcome.failure(input, url, "fetch", e));
+            }
+            queue.put(message);
         }
         queue.put(End.INSTANCE);
     }
 
     private void consume(BlockingQueue<Message> queue) throws InterruptedException {
-        while (queue.take() instanceof Fetched fetched) {
-            output.accept(Outcome.success(fetched.input(), fetched.url(), parse.apply(fetched.page())));
+        while (true) {
+            switch (queue.take()) {
+                case Fetched page -> output.accept(parsePage(page));
+                case FetchFailure failure -> output.accept(failure.outcome());
+                case End ignored -> { return; }
+            }
+        }
+    }
+
+    private Outcome parsePage(Fetched fetched) {
+        try {
+            return Outcome.success(fetched.input(), fetched.url(), parse.apply(fetched.page()));
+        } catch (RuntimeException e) {
+            return Outcome.failure(fetched.input(), fetched.url(), "parse", e);
         }
     }
 }

@@ -77,6 +77,30 @@ class PipelineTest {
     }
 
     @Test
+    void failedInputsDoNotPreventOtherOccurrencesFromFinishing() throws Exception {
+        var outcomes = new ArrayList<Outcome>();
+        var pipeline = new Pipeline(url -> {
+            if (url.equals("offline")) throw new java.io.IOException("Timed out");
+            if (url.equals("invalid")) throw new IllegalArgumentException("Invalid URL");
+            return url.equals("unparseable") ? new Page(PAGE.effectiveUri(), "broken") : PAGE;
+        }, page -> {
+            if (page.html().equals("broken")) throw new IllegalStateException();
+            return HtmlLinks.extract(page);
+        }, outcomes::add, 1);
+
+        pipeline.run(List.of("good", "offline", "invalid", "unparseable", "good"));
+        assertEquals(List.of("ok", "error", "error", "error", "ok"),
+                outcomes.stream().map(Outcome::status).toList());
+        assertEquals("fetch", outcomes.get(1).stage());
+        assertEquals("Timed out", outcomes.get(1).error());
+        assertEquals("parse", outcomes.get(3).stage());
+        assertEquals("IllegalStateException", outcomes.get(3).error());
+        assertEquals(List.of(1, 2, 3, 4, 5), outcomes.stream().map(Outcome::input).toList());
+        assertEquals(List.of("good", "offline", "invalid", "unparseable", "good"),
+                outcomes.stream().map(Outcome::url).toList());
+    }
+
+    @Test
     void emptyInputTerminatesWithoutAnyOutput() throws Exception {
         var outcomes = new ArrayList<Outcome>();
         new Pipeline(url -> PAGE, HtmlLinks::extract, outcomes::add, 1).run(List.of());
