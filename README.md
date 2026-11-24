@@ -1,43 +1,77 @@
 # Queued Link Extractor
 
-A command-line tool for listing the hyperlinks found on each supplied web page. This first milestone defines the behavior and sets up the Java build. The executable comes in the next milestone.
+List the hyperlinks from each supplied web page as JSON Lines. One producer fetches pages in argument order while one consumer parses the HTML and writes each result. Only the supplied pages and their redirects are fetched.
 
-## Verify the build
+## Build and run
 
-Install JDK 25 and point `JAVA_HOME` at it. From the repository root, run the Gradle Wrapper. The first run downloads Gradle and the build dependencies.
+Install JDK 25 and point `JAVA_HOME` at it. The Gradle Wrapper downloads Gradle and the dependencies on the first build. From the repository root, run
 
 ```sh
-./gradlew --version
-./gradlew clean build
+./gradlew clean build installDist
+build/install/queued-link-extractor/bin/queued-link-extractor https://example.org/
 ```
 
-On Windows, use `gradlew.bat clean build`. The GitHub Actions **Verify** workflow runs the same clean build on Linux.
+On Windows, run `gradlew.bat clean build installDist` and use the `queued-link-extractor.bat` launcher under `build\install\queued-link-extractor\bin`.
 
-Both test suites use JUnit Jupiter. Put unit tests in `src/test/java` and integration tests in `src/integrationTest/java`. Run either suite with `./gradlew test` or `./gradlew integrationTest`. JaCoCo combines both test runs and fails verification on any missed production line, branch, or bytecode instruction. Once production sources exist, the build also requires unit tests. This milestone has no production classes, so coverage is currently unmeasured. With classes and tests present, open `build/reports/jacoco/test/html/index.html` locally or download the coverage report from the workflow run.
+## Try two inputs locally
+
+In one terminal, create a page and serve it with the JDK's web server.
+
+```sh
+pages=$(mktemp -d)
+echo '<a href="guide">Guide</a>' > "$pages/index.html"
+jwebserver -b 127.0.0.1 -p 8000 -d "$pages"
+```
+
+In another terminal, run the installed command from the repository root.
+
+```sh
+build/install/queued-link-extractor/bin/queued-link-extractor \
+  http://127.0.0.1:8000/index.html http://127.0.0.1:8000/missing
+```
+
+Expected standard output
+
+```jsonl
+{"input":1,"url":"http://127.0.0.1:8000/index.html","status":"ok","links":["http://127.0.0.1:8000/guide"]}
+{"input":2,"url":"http://127.0.0.1:8000/missing","status":"error","stage":"fetch","error":"HTTP 404"}
+```
+
+Stop the web server with Ctrl+C.
 
 ## Input and output contract
 
-Supply one or more HTTP or HTTPS URLs as command-line arguments. Each occurrence is a separate input. The planned output is one JSON object per line on standard output, with the original URL and a one-based input index. A successful outcome includes a list of hyperlinks in document order. A page with zero links produces an empty list. Results can arrive in completion order. Only supplied pages are fetched.
+Supply HTTP or HTTPS URLs as command-line arguments. Each occurrence receives its own one-based input index, including repeated URLs. For each input, the command emits and flushes one JSON object on standard output. A successful result contains the resolved targets of `a[href]` elements in document order, including duplicates. Relative links use the effective URI after redirects and honor an HTML base element. Targets that jsoup cannot resolve are omitted. Resolvable schemes such as `mailto:`, `tel:`, `data:`, and `javascript:` are included as text. A page with zero links produces an empty list.
 
-For the input `https://example.org/docs/index.html` containing `<a href="guide">Guide</a>`, the expected output is:
+Recoverable fetch and parse errors identify the input, stage, and reason. A completed batch exits with status zero, including batches with per-input errors. A failure that prevents the run from completing, such as a broken output stream, produces a nonzero exit. Fatal JVM errors terminate the batch. Running without arguments prints usage on standard error and exits with status zero.
 
-```json
-{"input":1,"url":"https://example.org/docs/index.html","status":"ok","links":["https://example.org/docs/guide"]}
-```
+The queue holds up to 16 waiting pages. When it fills, the producer waits for the consumer to make room. The fetcher allows five seconds to connect and twenty seconds for a complete download, including the response body. It accepts up to 2 MiB of HTML or XHTML per page and reports missing or unsupported media types as fetch errors. HTTP 204 and 205 produce empty results. The HTTP charset takes precedence over an HTML charset declaration. Unfollowed redirects identify their status and destination when supplied.
 
-## Acceptance examples
+## Verification
 
-| Given | When | Then |
-| --- | --- | --- |
-| A ready page and a second fetch still in flight | The consumer drains the queue | It emits the first result, waits for the second, and exits after emitting both. |
-| Two valid pages and one failed fetch | The failed fetch returns HTTP 404 | The failed input has a fetch error, and both valid pages have their own results. |
-| Two pages, one of which fails during parsing | The consumer encounters the parse failure | It records the error against that input and continues with the other page. |
-| A redirect to a page containing relative links | The HTML is parsed | Links resolve against the effective document base. The result retains the original input URL. |
-| Three ready pages and space for two waiting pages | The consumer pauses | The default mode waits for space. In drop-oldest mode the earliest waiting page gets a dropped outcome. |
-| A server responds with HTTP 429 | The permitted wait and retry budget allow another attempt | The fetcher observes the origin cooldown before retrying. HTTP 401 and 403 are terminal for that input. |
+`./gradlew clean build` runs both JUnit suites and checks for zero missed production lines, branches, and bytecode instructions with JaCoCo. Run `./gradlew test` for unit tests or `./gradlew integrationTest` for the CLI tests against a loopback HTTP server. Open `build/reports/jacoco/test/html/index.html` for the combined coverage report. The GitHub Actions **Verify** workflow runs the clean build on Linux and saves the report.
+
+| Behavior | Executable example |
+| --- | --- |
+| A slow final fetch leaves the queue temporarily empty | [PipelineTest](src/test/java/dev/linkextractor/PipelineTest.java) holds the final fetch open, observes the first output, then releases the fetch and checks both results. |
+| Fetch or parse fails in the middle of a batch | The same suite checks every outcome, including two occurrences of the same good URL. It also checks worker shutdown after an output failure. |
+| A page contains relative links, duplicates, or no anchors | [HtmlLinksTest](src/test/java/dev/linkextractor/HtmlLinksTest.java) checks the extracted list and HTML base handling. |
+| A redirect changes the base URI and another page returns 404 | [LinkExtractorIT](src/integrationTest/java/dev/linkextractor/LinkExtractorIT.java) checks the JSON Lines emitted by the CLI. |
+
+### Planned CI examples
+
+Later milestones will add commented examples to the [verification workflow](.github/workflows/verify.yml). The executable checks will continue to grow alongside the features they test.
+
+| Milestone | What the workflow comments will illustrate |
+| --- | --- |
+| 3 · Concurrent fetching | Where SonarQube analysis would run after Gradle and import the JaCoCo XML report to show coverage alongside code findings. |
+| 5 · HTTP resilience | Where a Mend software composition analysis scan would inspect the resolved Gradle dependencies and surface vulnerable components for review. |
+| 6 · Delivery | An optional deployment example showing how a successful build's CLI distribution could be promoted to a staging environment. |
+
+These examples will appear only as YAML comments. The coverage report from the **Verify** job remains available for reviewers to inspect directly.
 
 ## Design and development
 
-[ADR 0001](docs/adr/0001-application-boundaries.md) records the application boundaries. The implementation sequence is the basic producer and consumer, bounded concurrent fetches, queue overflow handling, and HTTP retry behavior. Each step will add executable examples and record significant design decisions alongside the code.
+[ADR 0001](docs/adr/0001-application-boundaries.md) describes the application boundaries. [ADR 0002](docs/adr/0002-pipeline-completion.md) explains queue completion and worker shutdown. Later milestones cover bounded concurrent downloads, optional oldest-page eviction, and HTTP retry and rate-limit handling.
 
-AI assisted with identifying acceptance examples, drafting the build configuration, and checking its behavior. The commit history records the progression of the work.
+AI assisted with drafting the implementation and tests. During development, the overlap test failed against an initial fetch-then-parse implementation. Running the producer and consumer independently made the first page visible while the second fetch was still blocked. The commit introducing the queue includes that test and the associated decision.
