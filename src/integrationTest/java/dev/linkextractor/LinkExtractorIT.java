@@ -41,7 +41,7 @@ class LinkExtractorIT {
             var original = System.out;
             try (var capture = new PrintStream(stdout, true, UTF_8)) {
                 System.setOut(capture);
-                LinkExtractor.main(new String[]{origin + "/start", origin + "/missing", "bad url",
+                LinkExtractor.main(new String[]{"--concurrency", "1", origin + "/start", origin + "/missing", "bad url",
                         origin + "/empty", origin + "/start"});
             } finally {
                 System.setOut(original);

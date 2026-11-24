@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 public final class LinkExtractor {
+    private static final int DEFAULT_FETCH_LIMIT = 4;
+    private static final String USAGE = "Usage: queued-link-extractor [--concurrency N] URL [URL ...]";
     private static final int QUEUE_CAPACITY = 16;
 
     private static final class OutputClosed extends RuntimeException {
@@ -23,8 +25,27 @@ public final class LinkExtractor {
 
     static void run(String[] args, java.util.function.IntConsumer exit) throws InterruptedException, ExecutionException {
         if (args.length == 0) {
-            System.err.println("Usage: queued-link-extractor URL [URL ...]");
+            System.err.println(USAGE);
             return;
+        }
+
+        var urls = List.of(args);
+        int fetchLimit = DEFAULT_FETCH_LIMIT;
+        if (urls.getFirst().equals("--concurrency")) {
+            if (urls.size() < 3) {
+                System.err.println(USAGE);
+                exit.accept(2);
+                return;
+            }
+            try {
+                fetchLimit = Integer.parseInt(urls.get(1));
+                if (fetchLimit < 1) throw new NumberFormatException();
+            } catch (NumberFormatException invalid) {
+                System.err.println("--concurrency requires a positive integer");
+                exit.accept(2);
+                return;
+            }
+            urls = urls.subList(2, urls.size());
         }
 
         var json = new GsonBuilder().disableHtmlEscaping().create();
@@ -37,8 +58,8 @@ public final class LinkExtractor {
                 if (System.out.checkError()) {
                     throw new OutputClosed();
                 }
-            }, QUEUE_CAPACITY);
-            pipeline.run(List.of(args));
+            }, QUEUE_CAPACITY, fetchLimit);
+            pipeline.run(urls);
         } catch (ExecutionException failure) {
             if (failure.getCause() instanceof OutputClosed closed) {
                 System.err.println(closed.getMessage());
