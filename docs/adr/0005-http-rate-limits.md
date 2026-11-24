@@ -12,6 +12,8 @@ Give each input at most one retry after a 429 and five seconds of total cooldown
 
 Share cooldowns by scheme, host, and effective port. Concurrent 429 responses can extend the cooldown. Convert an HTTP date to a delay when the response arrives and measure elapsed time with a monotonic clock. Recheck after waking. After an origin returns 429, admit at most one request every 100 ms to that origin for the rest of the batch. Admission is atomic across workers. Observe the policy before each GET, including redirect hops. Follow up to five normal HTTP redirects and preserve HTTPS downgrade protection. Report 401, 403, other HTTP errors, and transport failures as terminal outcomes for the input.
 
+For redirects and HTTP errors, the status and headers are sufficient to decide the next step. The fetcher closes the unread body after the JDK client delivers the response. Closing it inside the body subscriber can reset an HTTP/2 stream before the client delivers its status. Waiting for the full error body could consume the deadline before a retry or redirect.
+
 ## Consequences
 
 A waiting input keeps its bounded fetch slot. Other admitted origins can continue while it waits. A fully occupied window delays new admissions until a slot frees. The wait budget bounds that cost and keeps sequential mode in input order. Already admitted requests may complete after another worker observes a 429.

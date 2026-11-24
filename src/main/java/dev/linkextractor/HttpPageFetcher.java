@@ -1,6 +1,7 @@
 package dev.linkextractor;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -24,6 +25,8 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
     private static final Set<String> HTML_TYPES = Set.of("text/html", "application/xhtml+xml");
 
     private static final Set<Integer> FOLLOWABLE = Set.of(301, 302, 303, 307, 308);
+    private record ResponseBody(Page.Markup markup, InputStream ignoredStream) {}
+
     private static final Duration WAIT_BUDGET = Duration.ofSeconds(5);
     private static final int MAX_REDIRECTS = 5;
 
@@ -58,7 +61,8 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
             }
             var response = exchange(request, end);
             int status = response.statusCode();
-            if (status / 100 == 2) return new Page(uri, response.body());
+            if (status / 100 == 2) return new Page(uri, response.body().markup());
+
             if (status == 429) {
                 // Even a final 429 can extend the wait for other workers using this origin.
                 cooldowns.record(uri, response.headers().firstValue("Retry-After").orElse(""));
@@ -99,11 +103,17 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
         return new IOException("HTTP " + status + " (redirect not followed" + destination + ")");
     }
 
-    private HttpResponse<Page.Markup> exchange(HttpRequest request, Duration end)
+    private HttpResponse<ResponseBody> exchange(HttpRequest request, Duration end)
             throws IOException, InterruptedException {
         var exchange = client.sendAsync(request, this::readHtml);
+        // A reset from closing an unread HTTP/2 body can mask the status while sendAsync
+        // is still completing. Attach cleanup to delivery so it also runs if the caller stops waiting.
+        var received = exchange.thenApply(response -> {
+            Closer.closeQuietly(response.body().ignoredStream());
+            return response;
+        });
         try {
-            return exchange.get(end.minus(cooldowns.elapsed()).toNanos(), TimeUnit.NANOSECONDS);
+            return received.get(end.minus(cooldowns.elapsed()).toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             throw new HttpTimeoutException("Download exceeded " + deadline);
         } catch (ExecutionException e) {
@@ -114,17 +124,13 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
         }
     }
 
-    private BodySubscriber<Page.Markup> readHtml(HttpResponse.ResponseInfo response) {
+    private BodySubscriber<ResponseBody> readHtml(HttpResponse.ResponseInfo response) {
         int status = response.statusCode();
         if (status / 100 != 2) {
-            // Return status and headers immediately. Error bodies can be large or slow.
-            return BodySubscribers.mapping(BodySubscribers.ofInputStream(), stream -> {
-                Closer.closeQuietly(stream);
-                return null;
-            });
+            return BodySubscribers.mapping(BodySubscribers.ofInputStream(), stream -> new ResponseBody(null, stream));
         }
         if (status == 204 || status == 205) {
-            return BodySubscribers.limiting(BodySubscribers.replacing(new Page.Markup(new byte[0], null)), 0);
+            return BodySubscribers.limiting(BodySubscribers.replacing(new ResponseBody(new Page.Markup(new byte[0], null), null)), 0);
         }
         String header = response.headers().firstValue("Content-Type")
                 .orElseThrow(() -> new IllegalArgumentException("Missing Content-Type"));
@@ -133,6 +139,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
             throw new IllegalArgumentException("Unsupported Content-Type: " + header);
         }
         var bytes = BodySubscribers.limiting(BodySubscribers.ofByteArray(), maxBytes);
-        return BodySubscribers.mapping(bytes, body -> new Page.Markup(body, Objects.toString(type.getCharset(), null)));
+        String charset = Objects.toString(type.getCharset(), null);
+        return BodySubscribers.mapping(bytes, body -> new ResponseBody(new Page.Markup(body, charset), null));
     }
 }
