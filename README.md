@@ -4,16 +4,16 @@ A command-line tool for listing the hyperlinks found on each supplied web page. 
 
 ## Verify the build
 
-Install JDK 25 and point `JAVA_HOME` at it. From the repository root, run the Maven Wrapper. The first run downloads Maven and the build dependencies.
+Install JDK 25 and point `JAVA_HOME` at it. From the repository root, run the Gradle Wrapper. The first run downloads Gradle and the build dependencies.
 
 ```sh
-./mvnw --version
-./mvnw clean verify
+./gradlew --version
+./gradlew clean build
 ```
 
-On Windows, use `mvnw.cmd clean verify`. The GitHub Actions **Verify** workflow runs the same clean build on Linux.
+On Windows, use `gradlew.bat clean build`. The GitHub Actions **Verify** workflow runs the same clean build on Linux.
 
-Unit tests will use JUnit Jupiter with Surefire (`*Test`), and integration tests will use Failsafe (`*IT`). JaCoCo combines both test runs and fails verification on any missed production line, branch, or bytecode instruction. Once production sources exist, the build also requires unit tests. This milestone has no production classes, so coverage is currently unmeasured. With classes and tests present, open `target/site/jacoco/index.html` locally or download the coverage report from the workflow run.
+Both test suites use JUnit Jupiter. Put unit tests in `src/test/java` and integration tests in `src/integrationTest/java`. Run either suite with `./gradlew test` or `./gradlew integrationTest`. JaCoCo combines both test runs and fails verification on any missed production line, branch, or bytecode instruction. Once production sources exist, the build also requires unit tests. This milestone has no production classes, so coverage is currently unmeasured. With classes and tests present, open `build/reports/jacoco/test/html/index.html` locally or download the coverage report from the workflow run.
 
 ## Input and output contract
 
