@@ -102,6 +102,56 @@ class PipelineTest {
     }
 
     @Test
+    void retainsIndependentWorkerFailuresAndAvoidsSelfSuppression() {
+        var primary = new AssertionError("output");
+        var secondary = new AssertionError("producer cleanup");
+        assertPeerFailure(primary, secondary);
+        assertArrayEquals(new Throwable[]{secondary}, primary.getSuppressed());
+
+        var shared = new AssertionError("shared failure");
+        assertPeerFailure(shared, shared);
+        assertEquals(0, shared.getSuppressed().length);
+    }
+
+    private static void assertPeerFailure(AssertionError outputError, AssertionError fetchError) {
+        var enteredFetch = new CountDownLatch(1);
+        var pipeline = new Pipeline(url -> {
+            if (url.equals("first")) return PAGE;
+            enteredFetch.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } finally {
+                throw fetchError;
+            }
+        }, HtmlLinks::extract, result -> {
+            try {
+                assertTrue(enteredFetch.await(2, TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            throw outputError;
+        }, 1);
+        var failure = assertThrows(ExecutionException.class, () -> pipeline.run(List.of("first", "last")));
+        assertSame(outputError, failure.getCause());
+    }
+
+    @Test
+    void aFatalProducerFailureTerminatesTheBatch() {
+        var pipeline = new Pipeline(url -> { throw new AssertionError("fatal fetch"); },
+                HtmlLinks::extract, result -> fail("unexpected result"), 1);
+        var failure = assertThrows(ExecutionException.class, () -> pipeline.run(List.of("first", "last")));
+        assertInstanceOf(AssertionError.class, failure.getCause());
+        assertEquals(0, failure.getCause().getSuppressed().length);
+    }
+
+    @Test
+    void aPeerThatAlreadyFinishedAddsNoFailure() throws Exception {
+        var primary = new AssertionError("output failed");
+        Pipeline.collectPeerFailure(primary, java.util.concurrent.CompletableFuture.completedFuture(null));
+        assertEquals(0, primary.getSuppressed().length);
+    }
+
+    @Test
     void emptyInputTerminatesWithoutAnyOutput() throws Exception {
         var outcomes = new ArrayList<Outcome>();
         new Pipeline(url -> PAGE, HtmlLinks::extract, outcomes::add, 1).run(List.of());

@@ -75,13 +75,34 @@ class LinkExtractorIT {
     }
 
     @Test
-    void aBrokenStandardOutputFailsTheRun() {
+    void aBrokenStandardOutputProducesOneDiagnosticAndExitCodeOne() throws Exception {
         var original = System.out;
-        try (var closed = new PrintStream(OutputStream.nullOutputStream())) {
+        var originalErr = System.err;
+        var stderr = new ByteArrayOutputStream();
+        var exitCode = new java.util.concurrent.atomic.AtomicInteger();
+        try (var closed = new PrintStream(OutputStream.nullOutputStream());
+             var capture = new PrintStream(stderr, true, UTF_8)) {
             closed.close();
             System.setOut(closed);
+            System.setErr(capture);
+            LinkExtractor.run(new String[]{"bad url"}, exitCode::set);
+        } finally {
+            System.setOut(original);
+            System.setErr(originalErr);
+        }
+        assertEquals(1, exitCode.get());
+        assertEquals(java.util.List.of("Cannot write to standard output"), stderr.toString(UTF_8).lines().toList());
+    }
+
+    @Test
+    void unexpectedWorkerFailuresRemainVisibleToTheCaller() {
+        var original = System.out;
+        try (var broken = new PrintStream(OutputStream.nullOutputStream()) {
+            @Override public void println(String line) { throw new AssertionError("writer failed"); }
+        }) {
+            System.setOut(broken);
             var failure = assertThrows(ExecutionException.class, () -> LinkExtractor.main(new String[]{"bad url"}));
-            assertEquals("Cannot write to standard output", failure.getCause().getMessage());
+            assertInstanceOf(AssertionError.class, failure.getCause());
         } finally {
             System.setOut(original);
         }

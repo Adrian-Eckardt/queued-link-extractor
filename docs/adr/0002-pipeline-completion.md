@@ -10,7 +10,7 @@ A slow final fetch can leave the queue temporarily empty. Exiting at that point 
 
 Run one producer and one consumer as independently scheduled tasks. The producer places each fetched page into a bounded FIFO queue with its original input index and URL. After its final handoff, the producer appends an end marker. The consumer waits for messages and exits upon reaching the marker. A full queue makes the producer wait for space.
 
-The coordinator observes both tasks in completion order. A failure that prevents either stage from continuing, such as a broken output stream, interrupts its peer. The coordinator waits for the workers to terminate before returning.
+The coordinator observes both tasks in completion order. A failure that prevents either stage from continuing, such as a broken output stream, interrupts its peer. The coordinator waits for the workers to terminate before returning. If both workers fail independently, the first failure retains the second as a suppressed cause. An interrupt caused by shutting down the peer is expected.
 
 ## Consequences
 

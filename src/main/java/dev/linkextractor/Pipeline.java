@@ -27,14 +27,34 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
         var queue = new ArrayBlockingQueue<Message>(capacity);
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             var completed = new ExecutorCompletionService<Void>(workers);
-            completed.submit(() -> { produce(urls, queue); return null; });
-            completed.submit(() -> { consume(queue); return null; });
+            var producer = completed.submit(() -> { produce(urls, queue); return null; });
+            var consumer = completed.submit(() -> { consume(queue); return null; });
             try {
-                completed.take().get();
-                completed.take().get();
+                var first = completed.take();
+                var peer = first == producer ? consumer : producer;
+                try {
+                    first.get();
+                } catch (ExecutionException primary) {
+                    workers.shutdownNow();
+                    collectPeerFailure(primary.getCause(), peer);
+                    throw primary;
+                }
+                peer.get();
             } finally {
                 // A failed stage can leave its peer blocked on a full or empty queue.
                 workers.shutdownNow();
+            }
+        }
+    }
+
+    static void collectPeerFailure(Throwable primary, java.util.concurrent.Future<Void> peer)
+            throws InterruptedException {
+        try {
+            peer.get();
+        } catch (ExecutionException secondary) {
+            var cause = secondary.getCause();
+            if (!(cause instanceof InterruptedException) && cause != primary) {
+                primary.addSuppressed(cause);
             }
         }
     }
