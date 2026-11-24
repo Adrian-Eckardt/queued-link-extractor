@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.function.BinaryOperator;
 import java.util.function.LongSupplier;
 
+/** Shares retry timing across fetch workers for the lifetime of one batch. */
 final class OriginCooldowns {
     static final class WaitBudgetExceeded extends IOException {
         WaitBudgetExceeded() {
@@ -62,6 +63,7 @@ final class OriginCooldowns {
     synchronized void record(URI uri, String retryAfter) {
         var wallTime = clock.instant();
         var delay = Duration.between(wallTime, retryTime(retryAfter.strip(), wallTime));
+        // Convert the server's wall-clock date once. Subsequent admissions use elapsed time.
         var until = elapsed().plus(delay);
         nextAdmission.merge(Origin.of(uri), until, BinaryOperator.maxBy(Duration::compareTo));
     }
@@ -94,6 +96,7 @@ final class OriginCooldowns {
             var delay = claimOrDelay(origin, budget, deadline);
             if (delay.isZero()) return budget;
             var before = elapsed();
+            // Sleep outside the monitor. Another worker can extend the cooldown while we wait.
             sleeper.sleep(delay);
             budget = budget.minus(elapsed().minus(before));
         }
@@ -109,6 +112,7 @@ final class OriginCooldowns {
             throw new HttpTimeoutException("Input deadline prevents the next request");
         }
         if (delay.compareTo(budget) > 0) throw new WaitBudgetExceeded();
+        // Reserve the next slot under the same lock so two waking workers cannot claim it.
         if (next != null && delay.isZero()) nextAdmission.put(origin, now.plus(RECOVERY_SPACING));
         return delay;
     }

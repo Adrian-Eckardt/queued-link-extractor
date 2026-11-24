@@ -4,6 +4,7 @@ import java.util.LinkedList;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
+/** Bounded FIFO shared by fetch workers and the consumer. All queue state is guarded by one lock. */
 final class PageQueue {
     enum Policy { BLOCK, DROP_OLDEST }
     sealed interface Message {}
@@ -18,6 +19,7 @@ final class PageQueue {
     private final ReentrantLock lock = new ReentrantLock(true);
     private final Condition readable = lock.newCondition();
     private final Condition writable = lock.newCondition();
+    // Drop notices keep their FIFO positions and have their own capacity allowance.
     private int notices;
 
     PageQueue(int capacity, Policy policy) {
@@ -45,6 +47,7 @@ final class PageQueue {
         var cursor = messages.listIterator();
         while (cursor.hasNext()) {
             if (cursor.next() instanceof Fetched page) {
+                // Replacing in place releases the markup and preserves the input's place in output.
                 cursor.set(new Dropped(Outcome.dropped(page.input(), page.url())));
                 notices++;
                 return true;

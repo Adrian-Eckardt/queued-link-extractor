@@ -19,6 +19,7 @@ import java.util.concurrent.TimeoutException;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.io.Closer;
 
+/** Fetches markup and its effective URI. Redirects and the optional retry share one input deadline. */
 record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, OriginCooldowns cooldowns) implements Pipeline.Fetcher {
     private static final Set<String> HTML_TYPES = Set.of("text/html", "application/xhtml+xml");
 
@@ -59,6 +60,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
             int status = response.statusCode();
             if (status / 100 == 2) return new Page(uri, response.body());
             if (status == 429) {
+                // Even a final 429 can extend the wait for other workers using this origin.
                 cooldowns.record(uri, response.headers().firstValue("Retry-After").orElse(""));
                 if (rateLimitedAt != null) throw new IOException("HTTP 429 (retry exhausted)");
                 rateLimitedAt = uri;

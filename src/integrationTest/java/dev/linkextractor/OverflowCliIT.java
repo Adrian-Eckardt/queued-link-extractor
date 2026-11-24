@@ -20,6 +20,8 @@ class OverflowCliIT {
     void stalledStdoutEmitsExactDroppedJsonForEvictedOccurrences() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+        // Hold the first output while inputs 2 through 19 compete for 16 queue slots.
+        // Keep input 20 in flight until the consumer has reported both evictions and parsed input 4.
         var writing = new CountDownLatch(1);
         var lastRequest = new CountDownLatch(1);
         var fourthOutput = new CountDownLatch(1);

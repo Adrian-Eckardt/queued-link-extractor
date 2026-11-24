@@ -11,6 +11,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+/** Coordinates fetch workers and a single consumer. Only the consumer calls the parser and writer. */
 record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capacity, int fetchLimit, Policy policy) {
     static final int DEFAULT_FETCH_LIMIT = 4;
     static final int MAX_FETCH_LIMIT = 64;
@@ -55,6 +56,7 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
                         String url = inputs.next();
                         pending.add(completed.submit(() -> {
                             queue.put(fetchPage(input, url));
+                            // Count handoffs here so a slow worker can never enqueue its page after End.
                             if (remaining.decrementAndGet() == 0) queue.put(End.INSTANCE);
                             return null;
                         }));
@@ -64,6 +66,7 @@ record Pipeline(Fetcher fetch, Parser parse, Consumer<Outcome> output, int capac
                     finished.get();
                 } while (!pending.isEmpty());
             } catch (ExecutionException failure) {
+                // Release peers blocked on network or queue I/O before collecting independent failures.
                 workers.shutdownNow();
                 for (var peer : pending) collectPeerFailure(failure.getCause(), peer);
                 throw failure;

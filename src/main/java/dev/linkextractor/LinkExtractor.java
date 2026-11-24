@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 
+/** Wires the HTTP fetcher, HTML parser and JSON Lines writer for a single command-line invocation. */
 public final class LinkExtractor {
     private static final String USAGE = "Usage: queued-link-extractor [--concurrency N] [--overflow block|drop-oldest] URL [URL ...]";
     private static final int QUEUE_CAPACITY = 16;
@@ -43,6 +44,7 @@ public final class LinkExtractor {
                 .build()) {
             var pipeline = new Pipeline(new HttpPageFetcher(client), HtmlLinks::extract, outcome -> {
                 System.out.println(json.toJson(outcome));
+                // PrintStream records write failures internally. Surface a closed pipe to stop the workers.
                 if (System.out.checkError()) {
                     throw new OutputClosed();
                 }
