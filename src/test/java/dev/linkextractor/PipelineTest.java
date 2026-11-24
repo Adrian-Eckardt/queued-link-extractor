@@ -152,6 +152,85 @@ class PipelineTest {
     }
 
     @Test
+    void twoFetchesOverlapAndAFreedSlotStartsTheThirdBeforeTheFirstFinishes() throws Exception {
+        var firstPair = new CountDownLatch(2);
+        var releaseFirst = new CountDownLatch(1);
+        var releaseSecond = new CountDownLatch(1);
+        var thirdOutput = new CountDownLatch(1);
+        var active = new java.util.concurrent.atomic.AtomicInteger();
+        var peak = new java.util.concurrent.atomic.AtomicInteger();
+        var outcomes = new ArrayList<Outcome>();
+
+        var pipeline = new Pipeline(url -> {
+            peak.accumulateAndGet(active.incrementAndGet(), Math::max);
+            try {
+                if (url.equals("first") || url.equals("second")) {
+                    firstPair.countDown();
+                    (url.equals("first") ? releaseFirst : releaseSecond).await();
+                }
+                return PAGE;
+            } finally {
+                active.decrementAndGet();
+            }
+        }, HtmlLinks::extract, outcome -> {
+            outcomes.add(outcome);
+            if (outcome.input() == 3) thirdOutput.countDown();
+        }, 1, 2);
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var run = executor.submit(() -> { pipeline.run(List.of("first", "second", "third")); return null; });
+            try {
+                assertTrue(firstPair.await(2, TimeUnit.SECONDS), "Both slots must be active");
+                releaseSecond.countDown();
+                assertTrue(thirdOutput.await(2, TimeUnit.SECONDS), "The slow first input must not delay the third");
+            } finally {
+                releaseFirst.countDown();
+                releaseSecond.countDown();
+            }
+            run.get(2, TimeUnit.SECONDS);
+        }
+        assertEquals(2, peak.get());
+        assertEquals(List.of(2, 3, 1), outcomes.stream().map(Outcome::input).toList());
+    }
+
+    @Test
+    void rejectsAWindowThatCannotMakeProgress() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new Pipeline(url -> PAGE, HtmlLinks::extract, result -> {}, 1, 0));
+    }
+
+    @Test
+    void drainsParallelFetchFailuresIncludingRepeatedInputs() throws Exception {
+        var outcomes = new ArrayList<Outcome>();
+        var pipeline = new Pipeline(url -> { throw new java.io.IOException("offline"); },
+                HtmlLinks::extract, outcomes::add, 1, 2);
+        pipeline.run(List.of("same", "same", "same"));
+        assertEquals(List.of(1, 2, 3), outcomes.stream().map(Outcome::input).sorted().toList());
+        assertTrue(outcomes.stream().allMatch(result -> result.stage().equals("fetch")));
+    }
+
+    @Test
+    void interruptingTheCoordinatorStopsAllOutstandingFetches() throws Exception {
+        var started = new CountDownLatch(2);
+        var stopped = new CountDownLatch(2);
+        var pipeline = new Pipeline(url -> {
+            started.countDown();
+            try { new CountDownLatch(1).await(); }
+            finally { stopped.countDown(); }
+            return PAGE;
+        }, HtmlLinks::extract, result -> fail("unexpected result"), 1, 2);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var run = executor.submit(() -> { pipeline.run(List.of("one", "two", "three")); return null; });
+            try {
+                assertTrue(started.await(2, TimeUnit.SECONDS));
+            } finally {
+                run.cancel(true);
+            }
+            assertTrue(stopped.await(2, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void emptyInputTerminatesWithoutAnyOutput() throws Exception {
         var outcomes = new ArrayList<Outcome>();
         new Pipeline(url -> PAGE, HtmlLinks::extract, outcomes::add, 1).run(List.of());
