@@ -160,11 +160,13 @@ class HttpPageFetcherIT {
         other.start();
         try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
             // Both waits use virtual time and release together after the healthy request finishes.
-            var observed = new OriginCooldowns(now::get, delay -> {
+            var ticks = new java.util.concurrent.atomic.AtomicLong();
+            var observed = new OriginCooldowns(now::get, ticks::get, delay -> {
+                long wake = ticks.get() + delay.toNanos();
                 firstWait.countDown();
                 sleeping.countDown();
                 release.await();
-                now.set(java.time.Instant.EPOCH.plus(delay));
+                ticks.accumulateAndGet(wake, Math::max);
             });
             var shared = new HttpPageFetcher(client, Duration.ofSeconds(10), 256, observed);
             var first = workers.submit(() -> shared.get(origin + "/limited"));
@@ -197,10 +199,10 @@ class HttpPageFetcherIT {
             }
         });
         var fetcher = new HttpPageFetcher(client);
-        for (var path : List.of("/a", "/b")) {
-            assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + path))
-                    .getMessage().contains("exceeds wait budget"));
-        }
+        var limited = assertThrows(IOException.class, () -> fetcher.get(origin + "/a"));
+        assertTrue(limited.getMessage().startsWith("HTTP 429"));
+        var deferred = assertThrows(IOException.class, () -> fetcher.get(origin + "/b"));
+        assertEquals("Origin cooling down: delay exceeds wait budget", deferred.getMessage());
         assertEquals(1, hits.get());
     }
 
@@ -224,6 +226,11 @@ class HttpPageFetcherIT {
                 .getMessage().contains("redirect not followed"));
         assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + "/redirects?ftp://example.org"))
                 .getMessage().contains("redirect not followed to ftp://"));
+        for (String location : List.of("/bad path", "https://missing_host/")) {
+            String query = location.replace(" ", "%20");
+            assertEquals("HTTP 302 (redirect not followed to " + location + ")",
+                    assertThrows(IOException.class, () -> fetcher.get(origin + "/redirects?" + query)).getMessage());
+        }
         assertTrue(assertThrows(IOException.class, () -> fetcher.get(origin + "/loop"))
                 .getMessage().contains("redirect limit exceeded"));
         assertThrows(java.net.http.HttpTimeoutException.class,

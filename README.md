@@ -74,7 +74,7 @@ Each URL has a twenty-second deadline for the entire operation, including redire
 | Another 429 after the retry, or a longer cooldown than the remaining budget | Emit a fetch error. Other inputs for that origin observe the longest outstanding server delay, even when this input gives up. |
 | Other unsuccessful status or transport error | Emit a fetch error and continue processing the batch. |
 
-Cooldowns are shared by scheme, host, and effective port. Redirects are checked at each hop. Waiting occupies one fetch slot. Other admitted origins can proceed independently.
+Cooldowns are shared by scheme, host, and effective port. After a 429, admissions to that origin are spaced at least 100 ms apart for the rest of the batch. Cooldowns use elapsed time, so a wall-clock adjustment cannot move the retry. A URL held back by another input’s response gets an origin-cooldown diagnostic. Redirects are checked at each hop. Waiting occupies one fetch slot. Other admitted origins can proceed independently.
 
 ## Verification
 

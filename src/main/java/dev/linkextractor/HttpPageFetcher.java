@@ -33,7 +33,7 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
     }
 
     HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes) {
-        this(client, deadline, maxBytes, new OriginCooldowns(InstantSource.system(), Thread::sleep));
+        this(client, deadline, maxBytes, new OriginCooldowns(InstantSource.system(), System::nanoTime, Thread::sleep));
     }
 
     HttpPageFetcher(HttpClient client) {
@@ -43,29 +43,37 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
     @Override
     public Page get(String url) throws IOException, InterruptedException {
         URI uri = URI.create(url);
-        long endNanos = System.nanoTime() + deadline.toNanos();
+        var end = cooldowns.elapsed().plus(deadline);
         Duration waitBudget = WAIT_BUDGET;
-        boolean retried = false;
+        URI rateLimitedAt = null;
         int redirects = 0;
         while (true) {
             var request = HttpRequest.newBuilder(uri).GET().build();
-            var remaining = timeLeft(endNanos);
-            if (waitBudget.compareTo(remaining) > 0) waitBudget = remaining;
-            waitBudget = cooldowns.await(uri, waitBudget);
-            var response = exchange(request, timeLeft(endNanos));
+            try {
+                waitBudget = cooldowns.await(uri, waitBudget, end);
+            } catch (OriginCooldowns.WaitBudgetExceeded e) {
+                if (uri.equals(rateLimitedAt)) throw new IOException("HTTP 429 (" + e.getMessage() + ")", e);
+                throw e;
+            }
+            var response = exchange(request, end);
             int status = response.statusCode();
             if (status / 100 == 2) return new Page(uri, response.body());
             if (status == 429) {
                 cooldowns.record(uri, response.headers().firstValue("Retry-After").orElse(""));
-                if (retried) throw new IOException("HTTP 429 (retry exhausted)");
-                retried = true;
+                if (rateLimitedAt != null) throw new IOException("HTTP 429 (retry exhausted)");
+                rateLimitedAt = uri;
                 continue;
             }
             if (FOLLOWABLE.contains(status) || status == 300) {
                 String location = response.headers().firstValue("Location").orElse("");
                 if (status == 300 || location.isBlank()) throw redirectError(status, location);
-                URI target = uri.resolve(location);
-                if (!canFollow(uri, target)) throw redirectError(status, location);
+                URI target;
+                try {
+                    target = uri.resolve(location);
+                } catch (IllegalArgumentException malformed) {
+                    throw redirectError(status, location);
+                }
+                if (target.getHost() == null || !canFollow(uri, target)) throw redirectError(status, location);
                 if (++redirects > MAX_REDIRECTS) throw new IOException("HTTP " + status + " (redirect limit exceeded)");
                 uri = target;
                 continue;
@@ -89,17 +97,11 @@ record HttpPageFetcher(HttpClient client, Duration deadline, int maxBytes, Origi
         return new IOException("HTTP " + status + " (redirect not followed" + destination + ")");
     }
 
-    private Duration timeLeft(long endNanos) throws HttpTimeoutException {
-        long nanos = endNanos - System.nanoTime();
-        if (nanos <= 0) throw new HttpTimeoutException("Download exceeded " + deadline);
-        return Duration.ofNanos(nanos);
-    }
-
-    private HttpResponse<Page.Markup> exchange(HttpRequest request, Duration remaining)
+    private HttpResponse<Page.Markup> exchange(HttpRequest request, Duration end)
             throws IOException, InterruptedException {
         var exchange = client.sendAsync(request, this::readHtml);
         try {
-            return exchange.get(remaining.toNanos(), TimeUnit.NANOSECONDS);
+            return exchange.get(end.minus(cooldowns.elapsed()).toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             throw new HttpTimeoutException("Download exceeded " + deadline);
         } catch (ExecutionException e) {

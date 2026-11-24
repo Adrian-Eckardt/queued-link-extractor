@@ -10,7 +10,7 @@ A 429 response asks the client to reduce its request rate. Retrying immediately 
 
 Give each input at most one retry after a 429 and five seconds of total cooldown waiting, within its existing twenty-second download deadline. Read Retry-After as seconds or an HTTP date. Use a one-second fallback for a missing or unusable value. When a server asks for a longer delay, report a fetch error for that input and retain the full delay for subsequent requests to the same origin.
 
-Share cooldowns by scheme, host, and effective port. Concurrent 429 responses can extend the cooldown. Recheck it after waking. Observe the policy before each GET, including redirect hops. Follow up to five normal HTTP redirects and preserve HTTPS downgrade protection. Report 401, 403, other HTTP errors, and transport failures as terminal outcomes for the input.
+Share cooldowns by scheme, host, and effective port. Concurrent 429 responses can extend the cooldown. Convert an HTTP date to a delay when the response arrives and measure elapsed time with a monotonic clock. Recheck after waking. After an origin returns 429, admit at most one request every 100 ms to that origin for the rest of the batch. Admission is atomic across workers. Observe the policy before each GET, including redirect hops. Follow up to five normal HTTP redirects and preserve HTTPS downgrade protection. Report 401, 403, other HTTP errors, and transport failures as terminal outcomes for the input.
 
 ## Consequences
 

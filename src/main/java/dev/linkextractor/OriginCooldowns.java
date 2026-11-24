@@ -2,6 +2,7 @@ package dev.linkextractor;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpTimeoutException;
 import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
@@ -13,10 +14,17 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.time.temporal.ChronoField;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
 import java.util.function.BinaryOperator;
+import java.util.function.LongSupplier;
 
 final class OriginCooldowns {
+    static final class WaitBudgetExceeded extends IOException {
+        WaitBudgetExceeded() {
+            super("Origin cooling down: delay exceeds wait budget");
+        }
+    }
+
     interface Sleeper {
         void sleep(Duration delay) throws InterruptedException;
     }
@@ -33,23 +41,29 @@ final class OriginCooldowns {
     private static final DateTimeFormatter ASCTIME = DateTimeFormatter
             .ofPattern("EEE MMM [ ]d HH:mm:ss uuuu", Locale.US).withZone(ZoneOffset.UTC);
 
-    private final ConcurrentHashMap<Origin, Instant> resumeTimes = new ConcurrentHashMap<>();
+    private static final Duration RECOVERY_SPACING = Duration.ofMillis(100);
+    private final HashMap<Origin, Duration> nextAdmission = new HashMap<>();
     private final InstantSource clock;
+    private final LongSupplier ticks;
+    private final long start;
     private final Sleeper sleeper;
 
-    OriginCooldowns(InstantSource clock, Sleeper sleeper) {
+    OriginCooldowns(InstantSource clock, LongSupplier ticks, Sleeper sleeper) {
         this.clock = clock;
+        this.ticks = ticks;
+        this.start = ticks.getAsLong();
         this.sleeper = sleeper;
     }
 
-    Instant now() {
-        return clock.instant();
+    Duration elapsed() {
+        return Duration.ofNanos(ticks.getAsLong() - start);
     }
 
-    void record(URI uri, String retryAfter) {
-        var now = now();
-        Instant until = retryTime(retryAfter.strip(), now);
-        resumeTimes.merge(Origin.of(uri), until, BinaryOperator.maxBy(Instant::compareTo));
+    synchronized void record(URI uri, String retryAfter) {
+        var wallTime = clock.instant();
+        var delay = Duration.between(wallTime, retryTime(retryAfter.strip(), wallTime));
+        var until = elapsed().plus(delay);
+        nextAdmission.merge(Origin.of(uri), until, BinaryOperator.maxBy(Duration::compareTo));
     }
 
     private static Instant retryTime(String value, Instant now) {
@@ -74,16 +88,28 @@ final class OriginCooldowns {
         return now.plusSeconds(1);
     }
 
-    Duration await(URI uri, Duration budget) throws IOException, InterruptedException {
+    Duration await(URI uri, Duration budget, Duration deadline) throws IOException, InterruptedException {
         var origin = Origin.of(uri);
         while (true) {
-            var now = now();
-            var until = resumeTimes.computeIfPresent(origin, (key, t) -> t.isAfter(now) ? t : null);
-            if (until == null) return budget;
-            var delay = Duration.between(now, until);
-            if (delay.compareTo(budget) > 0) throw new IOException("HTTP 429 (origin cooldown exceeds wait budget)");
+            var delay = claimOrDelay(origin, budget, deadline);
+            if (delay.isZero()) return budget;
+            var before = elapsed();
             sleeper.sleep(delay);
-            budget = budget.minus(delay);
+            budget = budget.minus(elapsed().minus(before));
         }
+    }
+
+    private synchronized Duration claimOrDelay(Origin origin, Duration budget, Duration deadline) throws IOException {
+        var now = elapsed();
+        var next = nextAdmission.get(origin);
+        var delay = Duration.ZERO;
+        if (next != null && next.compareTo(now) > 0) delay = next.minus(now);
+        var timeLeft = deadline.minus(now);
+        if (timeLeft.compareTo(budget) <= 0 && delay.compareTo(timeLeft) >= 0) {
+            throw new HttpTimeoutException("Input deadline prevents the next request");
+        }
+        if (delay.compareTo(budget) > 0) throw new WaitBudgetExceeded();
+        if (next != null && delay.isZero()) nextAdmission.put(origin, now.plus(RECOVERY_SPACING));
+        return delay;
     }
 }
